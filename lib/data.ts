@@ -282,6 +282,33 @@ export async function getGeneratedCreatives(limit = 24): Promise<Creative[]> {
   }
 }
 
+export type Storyboard = {
+  id: string;
+  prompt: string;
+  provider: string | null;
+  clip_count: number;
+  status: string;
+  final_video_url: string | null;
+  final_status: string | null;
+  created_at: string;
+};
+
+/** Multi-scene storyboards (their scene clips are ad_creatives with this storyboard_id). */
+export async function getStoryboards(limit = 8): Promise<Storyboard[]> {
+  try {
+    const sb = getServiceClient();
+    const { data, error } = await sb
+      .from("storyboards")
+      .select("id, prompt, provider, clip_count, status, final_video_url, final_status, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error || !data) return [];
+    return data as Storyboard[];
+  } catch {
+    return [];
+  }
+}
+
 export type Brand = {
   id: string;
   name: string;

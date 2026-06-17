@@ -14,13 +14,14 @@ import {
   CheckCircle2,
   Film,
 } from "lucide-react";
-import { ScreenHeader, Card, Badge, EmptyState, Modal, Stat } from "@/components/ui";
+import { ScreenHeader, Card, Badge, EmptyState, Modal, Stat, Tabs } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
 import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
 import { renderVideo, pollVideoJobs } from "@/app/actions";
 import ReplicatePanel from "./ReplicatePanel";
-import type { Creative } from "@/lib/data";
+import StoryboardPanel from "./StoryboardPanel";
+import type { Creative, Storyboard } from "@/lib/data";
 
 const ACCENT = "var(--color-publish)";
 
@@ -34,34 +35,43 @@ function isRendering(c: Creative) {
   return c.video_status === "queued" || c.video_status === "rendering";
 }
 
-export default function PublishClient({ creatives }: { creatives: Creative[] }) {
+export default function PublishClient({
+  creatives,
+  storyboards,
+}: {
+  creatives: Creative[];
+  storyboards: Storyboard[];
+}) {
   const router = useRouter();
   const [target, setTarget] = useState("meta");
   const [model, setModel] = useState<VideoProvider>("seedance");
   const [review, setReview] = useState<Creative | null>(null);
+  const [mode, setMode] = useState("replicate");
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const anyRendering = creatives.some(isRendering);
   const stills = creatives.filter((c) => !c.video_url && !isRendering(c));
+  const anyStoryboardActive = storyboards.some((s) =>
+    ["scripting", "generating", "stitching"].includes(s.status)
+  );
+  const polling = anyRendering || anyStoryboardActive;
 
-  // Drive kie polling from the client while anything is rendering.
+  // Drive kie polling from the client while clips render or stories stitch.
   useEffect(() => {
-    if (!anyRendering) return;
-    let active = true;
+    if (!polling) return;
+    let alive = true;
     const tick = async () => {
-      const r = await pollVideoJobs();
-      if (active && r.ok && (r.data as { updated?: number } | undefined)?.updated) {
-        router.refresh();
-      }
+      await pollVideoJobs();
+      if (alive) router.refresh();
     };
     const iv = setInterval(tick, 6000);
     return () => {
-      active = false;
+      alive = false;
       clearInterval(iv);
     };
-  }, [anyRendering, router]);
+  }, [polling, router]);
 
   function render(id: string, provider: VideoProvider) {
     setBusyId(id);
@@ -94,8 +104,61 @@ export default function PublishClient({ creatives }: { creatives: Creative[] }) 
         badgeTone={creatives.length ? "publish" : "neutral"}
       />
 
-      {/* Replicate-from-reference */}
-      <ReplicatePanel />
+      {/* Create: replicate a single clip, or build a multi-scene story */}
+      <div className="mb-4">
+        <Tabs
+          accent={ACCENT}
+          active={mode}
+          onChange={setMode}
+          tabs={[
+            { id: "replicate", label: "Replicate" },
+            { id: "story", label: "Multi-scene" },
+          ]}
+        />
+      </div>
+      {mode === "replicate" ? <ReplicatePanel /> : <StoryboardPanel />}
+
+      {/* Stories — multi-scene, with the stitched final */}
+      {storyboards.length > 0 && (
+        <div className="mb-5">
+          <p className="mb-2 text-[15px] font-bold">Stories</p>
+          <div className="flex flex-col gap-3">
+            {storyboards.map((s) => (
+              <Card key={s.id} className="p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="line-clamp-1 text-[13.5px] font-bold">{s.prompt}</p>
+                    <p className="text-[11.5px] text-[var(--color-ink-muted)]">
+                      {s.clip_count} scenes · {providerLabel(s.provider)}
+                    </p>
+                  </div>
+                  <StoryStatus s={s} />
+                </div>
+                {s.final_video_url && (
+                  <div className="mt-2.5 flex flex-wrap items-center gap-3">
+                    {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                    <video
+                      src={s.final_video_url}
+                      controls
+                      playsInline
+                      className="max-h-[280px] w-auto rounded-xl bg-black"
+                    />
+                    <a
+                      href={s.final_video_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      download
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
+                    >
+                      <Download size={14} /> Download story
+                    </a>
+                  </div>
+                )}
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Model picker + render-all */}
       {creatives.length > 0 && (
@@ -428,6 +491,15 @@ function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
       </div>
     </button>
   );
+}
+
+/* Status pill for a storyboard row. */
+function StoryStatus({ s }: { s: Storyboard }) {
+  if (s.final_video_url) return <Badge tone="publish">Story ready</Badge>;
+  if (s.status === "stitching") return <Badge tone="decode">Stitching…</Badge>;
+  if (s.status === "failed" || s.final_status === "failed") return <Badge tone="danger">Failed</Badge>;
+  if (s.status === "scripting") return <Badge tone="warn">Scripting…</Badge>;
+  return <Badge tone="decode">Rendering scenes…</Badge>;
 }
 
 /* Labelled copy block for the review modal. */
