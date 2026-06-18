@@ -13,7 +13,7 @@ import {
   Stat,
 } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
-import { compact, money, verticalLabel } from "@/lib/format";
+import { compact, money, verticalLabel, initials } from "@/lib/format";
 import { searchAds } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup } from "@/lib/data";
 
@@ -73,6 +73,60 @@ function FilterSelect({
         ))}
       </select>
     </label>
+  );
+}
+
+/**
+ * Reconstructed Facebook-style ad card (ported from v1). Meta blocks embedding
+ * the real creative (X-Frame-Options: DENY) and the API returns no media URL —
+ * so we rebuild the ad from its text fields + a live landing-page screenshot
+ * (crawled page_screenshot_url, else a thum.io shot of the destination).
+ */
+function FacebookAdPreview({ ad }: { ad: AdRow }) {
+  const abs = siteUrl(ad.destination_url);
+  const previewImg =
+    ad.page_screenshot_url ||
+    (abs ? `https://image.thum.io/get/width/600/crop/380/noanimate/${encodeURIComponent(abs)}` : null);
+  return (
+    <div className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-white">
+      <div className="flex items-center gap-2.5 px-3 pt-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[12px] font-extrabold text-[var(--color-accent)]">
+          {initials(ad.page_name)}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[13px] font-bold">{ad.page_name || "Advertiser"}</p>
+          <p className="text-[11px] text-[var(--color-ink-muted)]">Sponsored · {ad.days_running}d running</p>
+        </div>
+      </div>
+      {ad.ad_body && (
+        <p className="whitespace-pre-wrap px-3 pb-2 pt-2 text-[13px] leading-relaxed line-clamp-6">
+          {ad.ad_body}
+        </p>
+      )}
+      {previewImg ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={previewImg} alt="ad preview" className="max-h-[360px] w-full object-cover" />
+      ) : (
+        <div className="grid aspect-[1.91/1] place-items-center bg-[var(--color-surface-2)] text-[12px] text-[var(--color-ink-muted)]">
+          No image — tap “View ad on Meta”
+        </div>
+      )}
+      <div className="flex items-center justify-between gap-2 bg-[var(--color-surface-2)] px-3 py-2.5">
+        <div className="min-w-0">
+          <p className="truncate text-[12px] font-bold">
+            {ad.page_headline || ad.ad_title || ad.page_name}
+          </p>
+          {abs && (
+            <p className="truncate text-[11px] uppercase tracking-wide text-[var(--color-ink-muted)]">
+              {abs.replace(/^https?:\/\//, "").replace(/\/.*$/, "")}
+            </p>
+          )}
+        </div>
+        <span className="shrink-0 rounded-lg bg-white px-3 py-1.5 text-[11px] font-bold shadow-sm">
+          {ad.page_cta || "Learn More"}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -439,32 +493,8 @@ export default function SourceClient({
       >
         {detail && (
           <div className="flex flex-col gap-4">
-            {/* Creative image */}
-            <div className="overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface-2)]">
-              {detail.page_screenshot_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={detail.page_screenshot_url}
-                  alt={detail.page_name || "ad creative"}
-                  className="max-h-[340px] w-full object-cover object-top"
-                />
-              ) : (
-                <div className="grid h-40 place-items-center text-[13px] text-[var(--color-ink-muted)]">
-                  No landing-page snapshot captured yet
-                </div>
-              )}
-            </div>
-
-            {/* Headline */}
-            <div>
-              <p className="text-[17px] font-extrabold leading-snug">
-                {detail.ad_title || detail.page_headline || "Untitled creative"}
-              </p>
-              <p className="mt-0.5 text-[12.5px] text-[var(--color-ink-muted)]">
-                {detail.page_name} · running {detail.days_running}d ·{" "}
-                {verticalLabel(detail.vertical)}
-              </p>
-            </div>
+            {/* Reconstructed Facebook ad (v1 parity) */}
+            <FacebookAdPreview ad={detail} />
 
             {/* Metrics */}
             <div className="grid grid-cols-4 gap-2">
@@ -478,18 +508,6 @@ export default function SourceClient({
                 )}
               />
             </div>
-
-            {/* Ad copy */}
-            {detail.ad_body && (
-              <div>
-                <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
-                  Ad copy
-                </p>
-                <p className="whitespace-pre-wrap rounded-xl bg-[var(--color-surface-2)] px-3.5 py-3 text-[13.5px] leading-relaxed">
-                  {detail.ad_body}
-                </p>
-              </div>
-            )}
 
             {/* Landing intel (post-crawl) */}
             {(detail.page_offer || detail.page_cta || detail.page_pricing) && (
