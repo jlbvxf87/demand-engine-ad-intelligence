@@ -87,6 +87,17 @@ export async function searchAds(keyword: string, filters: SearchFilters = {}): P
   return r;
 }
 
+/**
+ * Source: page search — pull ALL of one advertiser's ads (up to 1000) into the
+ * app by page_id. Exact + complete (vs. fuzzy keyword search). This is how you
+ * see a brand's full creative set and spot who's running the most.
+ */
+export async function searchByPage(pageId: string): Promise<ActionResult> {
+  const r = await callRoute("/api/spy/search", { search_page_ids: pageId });
+  if (r.ok) revalidatePath("/source");
+  return r;
+}
+
 /** Source: scrape the real ad creative (fbcdn media) for an ad via the scraper. */
 export async function fetchCreative(adId: string): Promise<ActionResult> {
   const r = await callRoute("/api/spy/fetch-creative", { ad_id: adId });

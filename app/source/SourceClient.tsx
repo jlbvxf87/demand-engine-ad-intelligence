@@ -14,7 +14,7 @@ import {
 } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { compact, money, verticalLabel, initials } from "@/lib/format";
-import { searchAds, fetchCreative } from "@/app/actions";
+import { searchAds, fetchCreative, searchByPage } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup } from "@/lib/data";
 
 const ACCENT = "var(--color-source)";
@@ -166,6 +166,7 @@ export default function SourceClient({
   const [detail, setDetail] = useState<AdRow | null>(null);
   const [advDetail, setAdvDetail] = useState<Advertiser | null>(null);
   const [loadingCreative, setLoadingCreative] = useState(false);
+  const [pullingAds, setPullingAds] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
@@ -205,6 +206,21 @@ export default function SourceClient({
 
   function toDecode(id: string) {
     router.push(`/decode?ad=${id}`);
+  }
+
+  async function pullAllAds(pageId: string) {
+    setPullingAds(true);
+    setNote(null);
+    const r = await searchByPage(pageId);
+    setPullingAds(false);
+    if (!r.ok) {
+      setNote(r.error || "Couldn't pull their ads");
+      return;
+    }
+    const n = (r.data as { meta?: { total_fetched?: number } } | undefined)?.meta?.total_fetched ?? 0;
+    setAdvDetail(null);
+    setNote(`Pulled ${n} of their ads into the app.`);
+    router.refresh();
   }
 
   return (
@@ -482,14 +498,29 @@ export default function SourceClient({
             </p>
             <div className="flex flex-col gap-2">
               {advDetail.page_id && (
+                <button
+                  onClick={() => pullAllAds(advDetail.page_id!)}
+                  disabled={pullingAds}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold text-white disabled:opacity-60"
+                  style={{ background: ACCENT }}
+                >
+                  {pullingAds ? (
+                    <>
+                      <Loader2 size={17} className="animate-spin" /> Pulling all their ads…
+                    </>
+                  ) : (
+                    "Pull all their ads into the app"
+                  )}
+                </button>
+              )}
+              {advDetail.page_id && (
                 <a
                   href={`https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=US&view_all_page_id=${advDetail.page_id}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-[15px] font-bold text-white"
-                  style={{ background: ACCENT }}
+                  className="flex w-full items-center justify-center gap-2 rounded-2xl border border-[var(--color-line)] px-5 py-3 text-[14px] font-bold"
                 >
-                  <ExternalLink size={17} /> View all their ads on Meta
+                  <ExternalLink size={16} /> View all their ads on Meta ↗
                 </a>
               )}
               {advDetail.topCreativeId && byId.get(advDetail.topCreativeId) && (
