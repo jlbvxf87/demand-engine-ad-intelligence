@@ -196,8 +196,19 @@ export default function SourceClient({
     setNote(null);
     startTransition(async () => {
       const r = await searchAds(query.trim(), { country, status, media, windowDays, platform });
-      if (!r.ok) setNote(r.error || "Search failed");
-      else router.refresh();
+      if (!r.ok) {
+        setNote(r.error || "Search failed");
+        return;
+      }
+      const m = (r.data as { meta?: { total_fetched?: number; added?: number } })?.meta;
+      if (m) {
+        setNote(
+          m.added
+            ? `Found ${m.total_fetched} ads — ${m.added} new added (the rest were already saved).`
+            : `Found ${m.total_fetched} ads — all already in your app, no duplicates added.`,
+        );
+      }
+      router.refresh();
     });
   }
 
@@ -232,12 +243,16 @@ export default function SourceClient({
       setNote(r.error || "Couldn't pull their ads");
       return;
     }
-    const n = (r.data as { meta?: { total_fetched?: number } } | undefined)?.meta?.total_fetched ?? 0;
+    const m = (r.data as { meta?: { total_fetched?: number; added?: number } } | undefined)?.meta;
+    const total = m?.total_fetched ?? 0;
+    const added = m?.added ?? 0;
     setAdvDetail(null);
     setNote(
-      n > 0
-        ? `Pulled ${n} of their ad${n === 1 ? "" : "s"} into the app.`
-        : "No new ads found for this brand on Meta right now — it may have paused them, or the keyword index hasn't caught them yet.",
+      total === 0
+        ? "No ads found for this brand on Meta right now — they may have paused them."
+        : added > 0
+          ? `Pulled ${added} new ad${added === 1 ? "" : "s"} (${total} matched; the rest were already saved).`
+          : `All ${total} of their ads were already in your app — nothing new to add.`,
     );
     router.refresh();
   }

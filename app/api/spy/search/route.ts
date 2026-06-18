@@ -378,6 +378,20 @@ export async function POST(req: Request) {
 
   const supabase = getServiceClient();
 
+  // Dedup against what's already stored: only insert ads we don't have yet
+  // (matched by meta_ad_id), so re-running a search never piles up duplicates.
+  const metaIds = rows.map((r) => r.meta_ad_id).filter(Boolean) as string[];
+  const existing = new Set<string>();
+  for (let i = 0; i < metaIds.length; i += 200) {
+    const { data: ex } = await supabase
+      .from('spy_ads')
+      .select('meta_ad_id')
+      .in('meta_ad_id', metaIds.slice(i, i + 200));
+    for (const e of (ex ?? []) as { meta_ad_id: string }[]) existing.add(e.meta_ad_id);
+  }
+  const newRows = rows.filter((r) => r.meta_ad_id && !existing.has(r.meta_ad_id));
+  const alreadyHad = uniqueAds.length - newRows.length;
+
   const searchLabel = keyword?.trim() || `page:${search_page_ids?.trim()}`;
   const { data: searchRow, error: searchErr } = await supabase
     .from('spy_searches')
@@ -389,7 +403,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Failed to save search' }, { status: 500 });
   }
 
-  const rowsWithSearchId = rows.map(r => ({ ...r, search_id: searchRow.id as string }));
+  const rowsWithSearchId = newRows.map(r => ({ ...r, search_id: searchRow.id as string }));
 
   // Insert in chunks — Supabase has row limits per insert
   const CHUNK = 100;
@@ -471,6 +485,8 @@ export async function POST(req: Request) {
     resolution, // null when not using advertiser_alias, or no match found
     meta: {
       total_fetched: uniqueAds.length,
+      added: newRows.length,
+      already_had: alreadyHad,
       pages_loaded: pagesLoaded,
       elapsed_ms: Date.now() - started,
     },
