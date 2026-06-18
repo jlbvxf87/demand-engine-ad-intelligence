@@ -48,13 +48,17 @@ async function run(req: Request) {
 
   const sb = getServiceClient();
   // Only ads never attempted: no creative yet AND not already marked "none".
+  // Ordered by ad VOLUME (then longevity) — those are the scaled winners shown on
+  // Home/Source, so the images people actually see get filled first (winner_score
+  // would prioritize big-spend advocacy ads we don't even display).
   const { data, error } = await sb
     .from("spy_ads")
     .select("id")
     .is("creative_media_url", null)
     .is("creative_media_type", null)
     .not("ad_snapshot_url", "is", null)
-    .order("winner_score", { ascending: false })
+    .order("brand_ad_count", { ascending: false })
+    .order("days_running", { ascending: false })
     .limit(limit);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

@@ -3,7 +3,7 @@ import { Search, ArrowRight, Sparkles, ExternalLink } from "lucide-react";
 import { Card } from "@/components/ui";
 import { getHomeStats, getScaledWinners, getGeneratedCreatives } from "@/lib/data";
 import { compact, initials } from "@/lib/format";
-import { toDomain, landingShot } from "@/lib/url";
+import { toDomain } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
 import { isIndependent } from "@/lib/targeting";
 import LatestVideos from "./LatestVideos";
@@ -118,14 +118,6 @@ export default async function HomePage() {
                     ) : ad.page_screenshot_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={ad.page_screenshot_url} alt={ad.page_name || "ad"} className="h-full w-full object-cover object-top" />
-                    ) : landingShot(ad.destination_url) ? (
-                      <div className="relative h-full w-full">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={landingShot(ad.destination_url) as string} alt="landing page" className="h-full w-full object-cover object-top" />
-                        <span className="absolute left-1.5 top-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[8.5px] font-bold text-white">
-                          Landing page
-                        </span>
-                      </div>
                     ) : hook ? (
                       <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-[var(--color-accent-soft)] to-[var(--color-surface-2)] p-2.5">
                         <span className="line-clamp-4 text-[11px] font-semibold leading-snug">{hook}</span>

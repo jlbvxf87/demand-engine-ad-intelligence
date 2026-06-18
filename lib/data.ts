@@ -165,7 +165,7 @@ function dedupeByMetaId(rows: AdRow[]): AdRow[] {
 // off the heavy text columns (ad_body excerpt is enough; page_ai_summary,
 // offer/pricing copy, and screenshots are only hydrated for the few reps shown).
 const SCALED_GROUP_COLS =
-  "id, meta_ad_id, ad_body, destination_url, page_name, winner_score, days_running";
+  "id, meta_ad_id, ad_body, destination_url, page_name, winner_score, days_running, creative_media_url";
 
 type ScaledGroupRow = {
   id: string;
@@ -175,6 +175,7 @@ type ScaledGroupRow = {
   page_name: string | null;
   winner_score: number | null;
   days_running: number | null;
+  creative_media_url: string | null;
 };
 
 export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
@@ -198,7 +199,7 @@ export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
 
     const groups = new Map<
       string,
-      { repId: string; repScore: number; repDays: number; count: number; pages: Set<string>; advs: Set<string>; maxDays: number }
+      { repId: string; repHasCreative: boolean; repScore: number; repDays: number; count: number; pages: Set<string>; advs: Set<string>; maxDays: number }
     >();
     for (const r of rows) {
       if (isBoilerplate(r.ad_body)) continue; // Meta disclaimer, not a real creative
@@ -207,14 +208,22 @@ export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
       const key = body.slice(0, 140);
       const score = r.winner_score ?? 0;
       const days = r.days_running ?? 0;
+      const hasCreative = !!r.creative_media_url;
       let g = groups.get(key);
       if (!g) {
-        g = { repId: r.id, repScore: score, repDays: days, count: 0, pages: new Set(), advs: new Set(), maxDays: 0 };
+        g = { repId: r.id, repHasCreative: hasCreative, repScore: score, repDays: days, count: 0, pages: new Set(), advs: new Set(), maxDays: 0 };
         groups.set(key, g);
       }
       g.count += 1;
-      if (score > g.repScore || (score === g.repScore && days > g.repDays)) {
+      // Prefer a representative that already has a real scraped creative, then
+      // higher score, then longevity — so the card shows a picture when any ad
+      // in the group has one (not a blank/unscraped rep).
+      const better =
+        (hasCreative && !g.repHasCreative) ||
+        (hasCreative === g.repHasCreative && (score > g.repScore || (score === g.repScore && days > g.repDays)));
+      if (better) {
         g.repId = r.id;
+        g.repHasCreative = hasCreative;
         g.repScore = score;
         g.repDays = days;
       }
