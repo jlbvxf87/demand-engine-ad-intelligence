@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { Search, ArrowRight, Sparkles, ExternalLink } from "lucide-react";
-import { Card, WinnerBadge } from "@/components/ui";
-import { getHomeStats, getWinningCreatives, getGeneratedCreatives } from "@/lib/data";
-import { compact, money, initials } from "@/lib/format";
+import { Card } from "@/components/ui";
+import { getHomeStats, getScaledWinners, getGeneratedCreatives } from "@/lib/data";
+import { compact, initials } from "@/lib/format";
 import { toDomain, landingShot } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
 import { isIndependent } from "@/lib/targeting";
@@ -18,20 +18,20 @@ const STAT_ACCENT = [
 ];
 
 export default async function HomePage() {
-  const [stats, winnersRaw, creatives] = await Promise.all([
+  const [stats, scaledRaw, creatives] = await Promise.all([
     getHomeStats(),
-    getWinningCreatives({ limit: 120 }),
+    getScaledWinners(40),
     getGeneratedCreatives(12),
   ]);
-  // Independent operators only (skip market leaders + advocacy/media), ranked by
-  // ad VOLUME — how many creatives the brand is running — not reported spend.
-  // One top ad per brand so the grid shows variety.
+  // ONLY proven winners: creatives an independent operator is running at SCALE
+  // (the same ad duplicated across many ads / landing pages). Ranked by volume,
+  // not reported spend — one per brand so the grid shows variety.
   const seenBrand = new Set<string>();
-  const winners = winnersRaw
-    .filter(isIndependent)
-    .sort((a, b) => b.brand_ad_count - a.brand_ad_count || b.winner_score - a.winner_score)
+  const winners = scaledRaw
+    .filter((w) => isIndependent(w.ad))
+    .sort((a, b) => b.adCount - a.adCount)
     .filter((w) => {
-      const b = (w.page_name || w.id).toLowerCase();
+      const b = (w.ad.page_name || w.ad.id).toLowerCase();
       if (seenBrand.has(b)) return false;
       seenBrand.add(b);
       return true;
@@ -86,45 +86,47 @@ export default async function HomePage() {
 
       {/* Top winning ads */}
       <SectionHeader title="Top winning ads" href="/source" cta="Source" />
+      <p className="-mt-1.5 mb-2.5 text-[12px] text-[var(--color-ink-muted)]">
+        Independent operators running the same creative at scale — proven by volume, not spend.
+      </p>
       {winners.length === 0 ? (
         <Empty
           icon={<Search size={22} className="text-[var(--color-ink-muted)]" />}
-          title="No winners yet"
-          hint="Run a search in Source to surface high-performing ads."
+          title="No scaled winners yet"
+          hint="Run a search in Source — creatives an operator is running over and over surface here."
         />
       ) : (
         <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
           {winners.map((w) => {
-            const hook = adHook(w.ad_body, w.ad_title, w.page_headline);
-            const meta = metaAdUrl(w.meta_ad_id);
-            const dom = toDomain(w.destination_url);
+            const ad = w.ad;
+            const hook = adHook(ad.ad_body, ad.ad_title, ad.page_headline);
+            const meta = metaAdUrl(ad.meta_ad_id);
+            const dom = toDomain(ad.destination_url);
             return (
-              <Card key={w.id} className="overflow-hidden p-0 transition-shadow hover:shadow-[0_4px_16px_rgba(16,27,22,0.08)]">
+              <Card key={w.key} className="overflow-hidden p-0 transition-shadow hover:shadow-[0_4px_16px_rgba(16,27,22,0.08)]">
                 {/* Tap the ad → open the real, live ad on Meta (like Source) */}
                 <a href={meta ?? "#"} target="_blank" rel="noreferrer" className="block">
-                  <div className="aspect-[4/3] w-full overflow-hidden">
-                    {w.creative_media_url ? (
-                      w.creative_media_type === "video" ? (
+                  <div className="relative aspect-[4/3] w-full overflow-hidden">
+                    {ad.creative_media_url ? (
+                      ad.creative_media_type === "video" ? (
                         // eslint-disable-next-line jsx-a11y/media-has-caption
-                        <video src={`${w.creative_media_url}#t=0.1`} muted playsInline preload="metadata" className="h-full w-full bg-black object-cover" />
+                        <video src={`${ad.creative_media_url}#t=0.1`} muted playsInline preload="metadata" className="h-full w-full bg-black object-cover" />
                       ) : (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={w.creative_media_url} alt={w.page_name || "ad"} className="h-full w-full bg-black object-cover" />
+                        <img src={ad.creative_media_url} alt={ad.page_name || "ad"} className="h-full w-full bg-black object-cover" />
                       )
-                    ) : w.page_screenshot_url ? (
+                    ) : ad.page_screenshot_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={w.page_screenshot_url} alt={w.page_name || "ad"} className="h-full w-full object-cover object-top" />
-                    ) : landingShot(w.destination_url) ? (
-                      // No creative from Meta — show the live landing page so the card still has a visual
+                      <img src={ad.page_screenshot_url} alt={ad.page_name || "ad"} className="h-full w-full object-cover object-top" />
+                    ) : landingShot(ad.destination_url) ? (
                       <div className="relative h-full w-full">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={landingShot(w.destination_url) as string} alt="landing page" className="h-full w-full object-cover object-top" />
+                        <img src={landingShot(ad.destination_url) as string} alt="landing page" className="h-full w-full object-cover object-top" />
                         <span className="absolute left-1.5 top-1.5 rounded bg-black/55 px-1.5 py-0.5 text-[8.5px] font-bold text-white">
                           Landing page
                         </span>
                       </div>
                     ) : hook ? (
-                      // No image from Meta — show the real hook so the card still has value
                       <div className="flex h-full w-full flex-col justify-between bg-gradient-to-br from-[var(--color-accent-soft)] to-[var(--color-surface-2)] p-2.5">
                         <span className="line-clamp-4 text-[11px] font-semibold leading-snug">{hook}</span>
                         <span className="flex items-center gap-1 text-[9.5px] font-bold text-[var(--color-source)]">
@@ -134,32 +136,30 @@ export default async function HomePage() {
                     ) : (
                       <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 bg-gradient-to-br from-[var(--color-accent-soft)] to-[var(--color-surface-2)]">
                         <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-[16px] font-extrabold text-[var(--color-accent)] shadow-sm">
-                          {initials(w.page_name)}
+                          {initials(ad.page_name)}
                         </span>
                         <span className="flex items-center gap-1 text-[9.5px] font-bold text-[var(--color-source)]">
                           <ExternalLink size={11} /> View on Meta
                         </span>
                       </div>
                     )}
+                    {/* Winner signal: how many ads run this creative */}
+                    <span className="absolute right-1.5 top-1.5 rounded-md bg-[var(--color-source)] px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-sm">
+                      {w.adCount}× ads
+                    </span>
                   </div>
                   <div className="px-2.5 pb-1.5 pt-2.5">
-                    <p className="truncate text-[12.5px] font-bold">{w.page_name || "Unknown"}</p>
+                    <p className="truncate text-[12.5px] font-bold">{ad.page_name || "Unknown"}</p>
                     {dom && <p className="truncate text-[10px] text-[var(--color-ink-muted)]">{dom}</p>}
-                    <div className="mt-1 flex items-center justify-between gap-1">
-                      <WinnerBadge badge={w.badge} />
-                      <span className="text-[11px] font-bold tabular-nums" style={{ color: "var(--color-source)" }}>
-                        {Math.round(w.winner_score)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[10.5px] text-[var(--color-ink-muted)]">
-                      {w.days_running}d running
-                      {(w.spend_lower ?? 0) > 0 || (w.spend_upper ?? 0) > 0 ? ` · ${money(w.spend_lower, w.spend_upper)}` : ""}
+                    <p className="mt-1 text-[10.5px] font-semibold text-[var(--color-ink-muted)]">
+                      {w.adCount}× ads
+                      {w.landingPages > 1 ? ` · ${w.landingPages} landing pages` : ""} · {w.maxDays}d live
                     </p>
                   </div>
                 </a>
                 {/* Secondary: decode why it works */}
                 <Link
-                  href={`/decode?ad=${w.id}`}
+                  href={`/decode?ad=${ad.id}`}
                   className="flex items-center justify-center gap-1 border-t border-[var(--color-line)] py-1.5 text-[11px] font-bold text-[var(--color-decode)]"
                 >
                   Decode <ArrowRight size={12} />
