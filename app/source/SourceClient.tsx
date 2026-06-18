@@ -290,44 +290,50 @@ export default function SourceClient({
             hint="Run a search above to pull winners from the Meta Ad Library."
           />
         ) : (
-          <Card className="overflow-hidden">
-            <div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b border-[var(--color-line)] px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
-              <span>Advertiser</span>
-              <span className="text-right">Active</span>
-              <span className="text-right">Winner</span>
-            </div>
-            {adv.map((a) => {
-              const on = advDetail?.page_name === a.page_name;
-              return (
-                <button
-                  key={a.page_name}
-                  onClick={() => setAdvDetail(a)}
-                  className="grid w-full grid-cols-[1fr_auto_auto] items-center gap-3 border-b border-[var(--color-line)] px-4 py-3 text-left transition-colors last:border-0"
-                  style={{ background: on ? "var(--color-source-soft)" : "transparent" }}
-                >
-                  <span className="min-w-0">
-                    <span className="flex items-center gap-1.5 truncate text-[14px] font-bold">
-                      {a.page_name}
-                      {a.isPersona && (
-                        <span className="rounded bg-[var(--color-decode-soft)] px-1.5 py-0.5 text-[9.5px] font-bold text-[var(--color-decode)]">
-                          PERSONA
-                        </span>
-                      )}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {adv.map((a) => (
+              <button
+                key={a.page_name}
+                onClick={() => setAdvDetail(a)}
+                className="flex flex-col gap-2.5 rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] p-3.5 text-left shadow-[0_1px_2px_rgba(16,21,27,0.03),0_10px_28px_-16px_rgba(16,21,27,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_2px_4px_rgba(16,21,27,0.04),0_18px_40px_-20px_rgba(16,21,27,0.20)]"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[var(--color-accent-soft)] text-[14px] font-extrabold text-[var(--color-accent)]">
+                      {initials(a.page_name)}
                     </span>
-                    <span className="truncate text-[12px] text-[var(--color-ink-muted)]">
-                      {a.activeAds} ads · {verticalLabel(a.vertical)}
-                    </span>
+                    <div className="min-w-0">
+                      <span className="flex items-center gap-1.5 truncate text-[13.5px] font-bold">
+                        {a.page_name}
+                        {a.isPersona && (
+                          <span className="shrink-0 rounded bg-[var(--color-decode-soft)] px-1.5 py-0.5 text-[9px] font-bold text-[var(--color-decode)]">
+                            PERSONA
+                          </span>
+                        )}
+                      </span>
+                      <span className="block truncate text-[11px] text-[var(--color-ink-muted)]">
+                        {verticalLabel(a.vertical)}
+                      </span>
+                    </div>
+                  </div>
+                  <WinnerBadge badge={a.badge} />
+                </div>
+                {a.topCreative && (
+                  <p className="line-clamp-2 text-[12px] leading-snug text-[var(--color-ink-muted)]">
+                    {a.topCreative}
+                  </p>
+                )}
+                <div className="mt-auto flex items-center justify-between border-t border-[var(--color-line)] pt-2 text-[11.5px]">
+                  <span className="font-semibold text-[var(--color-ink-muted)]">
+                    {compact(a.activeAds)} ads
                   </span>
-                  <span className="text-right text-[14px] font-bold tabular-nums">
-                    {compact(a.activeAds)}
+                  <span className="font-bold tabular-nums" style={{ color: ACCENT }}>
+                    Score {Math.round(a.maxScore)}
                   </span>
-                  <span className="text-right text-[14px] font-extrabold tabular-nums" style={{ color: ACCENT }}>
-                    {Math.round(a.maxScore)}
-                  </span>
-                </button>
-              );
-            })}
-          </Card>
+                </div>
+              </button>
+            ))}
+          </div>
         ))}
 
       {/* ── Creatives ───────────────────────────────────────────────────── */}
