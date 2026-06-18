@@ -5,6 +5,7 @@ import { getHomeStats, getWinningCreatives, getGeneratedCreatives } from "@/lib/
 import { compact, money, initials } from "@/lib/format";
 import { toDomain } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
+import { isIndependent } from "@/lib/targeting";
 import LatestVideos from "./LatestVideos";
 
 export const dynamic = "force-dynamic";
@@ -19,12 +20,16 @@ const STAT_ACCENT = [
 export default async function HomePage() {
   const [stats, winnersRaw, creatives] = await Promise.all([
     getHomeStats(),
-    getWinningCreatives({ limit: 60 }),
+    getWinningCreatives({ limit: 120 }),
     getGeneratedCreatives(12),
   ]);
-  // One top ad per brand so the grid shows variety, not 6 of the same advertiser.
+  // Independent operators only (skip market leaders + advocacy/media), ranked by
+  // ad VOLUME — how many creatives the brand is running — not reported spend.
+  // One top ad per brand so the grid shows variety.
   const seenBrand = new Set<string>();
   const winners = winnersRaw
+    .filter(isIndependent)
+    .sort((a, b) => b.brand_ad_count - a.brand_ad_count || b.winner_score - a.winner_score)
     .filter((w) => {
       const b = (w.page_name || w.id).toLowerCase();
       if (seenBrand.has(b)) return false;

@@ -17,6 +17,7 @@ import AdThumb from "@/components/AdThumb";
 import { compact, money, verticalLabel, initials } from "@/lib/format";
 import { toSiteUrl, toDomain } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
+import { isIndependent } from "@/lib/targeting";
 import { searchAds, fetchCreative, searchByPage, loadCreatives } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup, ScaledWinner } from "@/lib/data";
 
@@ -166,15 +167,29 @@ export default function SourceClient({
   const [extraCreatives, setExtraCreatives] = useState<AdRow[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
+  const [independentOnly, setIndependentOnly] = useState(true);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
   const vFilter = (v: string | null) => vertical === "all" || v === vertical;
+  // Skip market leaders + advocacy/media unless the user turns the toggle off.
+  const indOk = (r: { page_name: string | null; destination_url?: string | null; spend_lower?: number | null; spend_upper?: number | null }) =>
+    !independentOnly || isIndependent(r);
 
   // creatives prop (top 60) + any pages loaded via "Load more"
   const allCreatives = useMemo(() => [...creatives, ...extraCreatives], [creatives, extraCreatives]);
-  const adv = useMemo(() => advertisers.filter((a) => vFilter(a.vertical)), [advertisers, vertical]);
-  const crv = useMemo(() => allCreatives.filter((a) => vFilter(a.vertical)), [allCreatives, vertical]);
+  const adv = useMemo(
+    () => advertisers.filter((a) => vFilter(a.vertical) && indOk({ page_name: a.page_name, destination_url: a.topDomain })),
+    [advertisers, vertical, independentOnly],
+  );
+  const crv = useMemo(
+    () => allCreatives.filter((a) => vFilter(a.vertical) && indOk(a)),
+    [allCreatives, vertical, independentOnly],
+  );
+  const scaledF = useMemo(
+    () => scaled.filter((w) => indOk(w.ad)),
+    [scaled, independentOnly],
+  );
   const byId = useMemo(() => new Map(allCreatives.map((c) => [c.id, c])), [allCreatives]);
   const moreAvailable = allCreatives.length < creativesTotal && !exhausted;
 
@@ -293,6 +308,18 @@ export default function SourceClient({
 
       {/* Advanced filters — drive the Meta search */}
       <div className="no-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1">
+        <button
+          onClick={() => setIndependentOnly((v) => !v)}
+          title="Hide market leaders (Pfizer, Hims…) and advocacy/issue ads — show only independent operators"
+          className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-pill)] border px-3 py-1.5 text-[12.5px] font-bold"
+          style={
+            independentOnly
+              ? { background: ACCENT, color: "white", borderColor: ACCENT }
+              : { borderColor: "var(--color-line)", color: "var(--color-ink-muted)" }
+          }
+        >
+          {independentOnly ? "✓ Independent only" : "Independent only"}
+        </button>
         <FilterSelect label="Country" value={country} onChange={setCountry} options={COUNTRIES} />
         <FilterSelect
           label="Status"
@@ -356,7 +383,7 @@ export default function SourceClient({
           active={tab}
           onChange={setTab}
           tabs={[
-            { id: "scaled", label: `Proven${scaled.length ? ` · ${scaled.length}` : ""}` },
+            { id: "scaled", label: `Proven${scaledF.length ? ` · ${scaledF.length}` : ""}` },
             { id: "advertisers", label: `Brands${adv.length ? ` · ${adv.length}` : ""}` },
             { id: "creatives", label: `All ads${crv.length ? ` · ${crv.length}` : ""}` },
             { id: "identity", label: `Personas${identity.length ? ` · ${identity.length}` : ""}` },
@@ -381,7 +408,7 @@ export default function SourceClient({
 
       {/* ── Scaled winners (duplication = proven) ───────────────────────── */}
       {tab === "scaled" &&
-        (scaled.length === 0 ? (
+        (scaledF.length === 0 ? (
           <EmptyState
             icon={Search}
             title="No scaled winners yet"
@@ -389,7 +416,7 @@ export default function SourceClient({
           />
         ) : (
           <div className="flex flex-col gap-3">
-            {scaled.map((w) => {
+            {scaledF.map((w) => {
               const hook = adHook(w.ad.ad_body, w.ad.ad_title, w.ad.page_headline);
               const dom = toDomain(w.ad.destination_url);
               const meta = metaAdUrl(w.ad.meta_ad_id);
