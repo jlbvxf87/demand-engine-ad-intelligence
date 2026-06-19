@@ -60,7 +60,7 @@ function spendMid(a: { spend_lower: number | null; spend_upper: number | null })
   return ((a.spend_lower ?? 0) + (a.spend_upper ?? 0)) / 2;
 }
 
-function toAdRow(a: Record<string, unknown>): AdRow {
+export function toAdRow(a: Record<string, unknown>): AdRow {
   const score = Number(a.winner_score ?? 0);
   const days = Number(a.days_running ?? 0);
   const sl = a.spend_lower == null ? null : Number(a.spend_lower);

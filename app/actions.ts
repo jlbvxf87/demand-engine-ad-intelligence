@@ -112,6 +112,15 @@ export async function loadCreatives(
   }
 }
 
+/** Source ONE ad from a pasted Meta Ad Library link → stores it + returns the row. */
+export async function sourceFromLink(link: string): Promise<ActionResult> {
+  const v = (link || "").trim();
+  if (!v) return { ok: false, error: "Paste a Meta Ad Library link first" };
+  const r = await callRoute("/api/spy/source-link", { link: v });
+  if (r.ok) revalidatePath("/source");
+  return r;
+}
+
 /** Source: scrape the real ad creative (fbcdn media) for an ad via the scraper. */
 export async function fetchCreative(adId: string): Promise<ActionResult> {
   const r = await callRoute("/api/spy/fetch-creative", { ad_id: adId });

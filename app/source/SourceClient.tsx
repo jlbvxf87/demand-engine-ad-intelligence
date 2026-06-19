@@ -18,7 +18,7 @@ import { compact, money, verticalLabel, initials } from "@/lib/format";
 import { toSiteUrl, toDomain } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
 import { isIndependent } from "@/lib/targeting";
-import { searchAds, fetchCreative, searchByPage, loadCreatives, recreate } from "@/app/actions";
+import { searchAds, fetchCreative, searchByPage, loadCreatives, recreate, sourceFromLink } from "@/app/actions";
 import type { Advertiser, AdRow, IdentityRollup, ScaledWinner } from "@/lib/data";
 
 const ACCENT = "var(--color-source)";
@@ -168,8 +168,34 @@ export default function SourceClient({
   const [independentOnly, setIndependentOnly] = useState(true);
   const [recreating, setRecreating] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [linkInput, setLinkInput] = useState("");
+  const [sourcing, setSourcing] = useState(false);
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
+
+  // Paste a Meta Ad Library link → source that exact ad → open it (Recreate/Decode).
+  async function sourceLink() {
+    if (!linkInput.trim()) return;
+    setSourcing(true);
+    setNote(null);
+    const r = await sourceFromLink(linkInput.trim());
+    setSourcing(false);
+    if (!r.ok) {
+      setNote(r.error || "Couldn't source that link");
+      return;
+    }
+    const payload = r.data as { ad?: AdRow; existed?: boolean };
+    if (payload?.ad) {
+      setLinkInput("");
+      setNote(
+        payload.existed
+          ? `“${payload.ad.page_name}” is already in your library — opening it.`
+          : `Sourced “${payload.ad.page_name}”. Recreate or decode it below.`,
+      );
+      setDetail(payload.ad);
+      router.refresh();
+    }
+  }
 
   // Recreate a winner on-brand: draft copy + stage the creative as the visual
   // reference, then drop into Create to refine / render.
@@ -342,6 +368,25 @@ export default function SourceClient({
           style={{ background: ACCENT }}
         >
           {pending ? <Loader2 size={14} className="animate-spin" /> : "Search"}
+        </button>
+      </div>
+
+      {/* Source ONE ad straight from a Meta Ad Library link */}
+      <div className="mb-4 flex items-center gap-2 rounded-2xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-2.5">
+        <ExternalLink size={16} className="shrink-0 text-[var(--color-ink-muted)]" />
+        <input
+          value={linkInput}
+          onChange={(e) => setLinkInput(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && sourceLink()}
+          placeholder="Or paste a Meta ad-library link (…/ads/library/?id=…)"
+          className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-[var(--color-ink-muted)]"
+        />
+        <button
+          onClick={sourceLink}
+          disabled={sourcing || !linkInput.trim()}
+          className="flex shrink-0 items-center gap-1 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40"
+        >
+          {sourcing ? <Loader2 size={13} className="animate-spin" /> : "Source ad"}
         </button>
       </div>
       {note && (
