@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isAdminAuthed } from "@/lib/admin-auth";
 import { isMachineAuthed } from "@/lib/machine-auth";
 import { getServiceClient } from "@/lib/supabase/server";
+import { getScaledWinners } from "@/lib/data";
 import { scrapeAndStoreCreative } from "@/lib/scrape";
 
 export const runtime = "nodejs";
@@ -47,10 +48,20 @@ async function run(req: Request) {
   const limit = Math.min(MAX_BATCH, Math.max(1, Number(url.searchParams.get("limit")) || DEFAULT_BATCH));
 
   const sb = getServiceClient();
-  // Only ads never attempted: no creative yet AND not already marked "none".
-  // Ordered by ad VOLUME (then longevity) — those are the scaled winners shown on
-  // Home/Source, so the images people actually see get filled first (winner_score
-  // would prioritize big-spend advocacy ads we don't even display).
+
+  // Priority 1: the SCALED winners actually shown on Home/Source. These are
+  // grouped by ad copy (the "97× ads" count), which a plain ORDER BY can't
+  // reproduce — so scrape their representative ads first, guaranteeing the cards
+  // people see get filled. (Skip reps already attempted with no result.)
+  let priorityIds: string[] = [];
+  try {
+    const scaled = await getScaledWinners(40);
+    priorityIds = scaled
+      .filter((w) => !w.ad.creative_media_url && !w.ad.creative_media_type && w.ad.ad_snapshot_url)
+      .map((w) => w.ad.id);
+  } catch {}
+
+  // Priority 2: fill the rest by ad VOLUME (then longevity) — never-attempted only.
   const { data, error } = await sb
     .from("spy_ads")
     .select("id")
@@ -62,7 +73,8 @@ async function run(req: Request) {
     .limit(limit);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const ids = (data ?? []).map((r) => (r as { id: string }).id);
+  const volumeIds = (data ?? []).map((r) => (r as { id: string }).id);
+  const ids = [...new Set([...priorityIds, ...volumeIds])].slice(0, limit);
   if (ids.length === 0) {
     return NextResponse.json({ processed: 0, succeeded: 0, remaining: 0, done: true });
   }
