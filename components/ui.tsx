@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, X, type LucideIcon } from "lucide-react";
 
 /* ── Screen header ─────────────────────────────────────────────────────── */
@@ -277,6 +278,14 @@ export function Modal({
   accent?: string;
   children: React.ReactNode;
 }) {
+  // Portal to <body> so position:fixed is resolved against the viewport, not a
+  // transformed ancestor. Several page wrappers use the `.de-in` animation,
+  // whose resting `transform: translateY(0)` still establishes a containing
+  // block — which would otherwise trap this overlay inside the content column
+  // (leaving the sidebar bright and the dialog visually off-center).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -288,9 +297,9 @@ export function Modal({
     };
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
       <div className="absolute inset-0 bg-[rgba(16,21,27,0.55)]" onClick={onClose} />
       <div
@@ -311,7 +320,8 @@ export function Modal({
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

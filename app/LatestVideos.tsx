@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { Play, Download, Share2 } from "lucide-react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { Play, Download, Share2, Trash2 } from "lucide-react";
 import { Modal } from "@/components/ui";
 import { providerLabel } from "@/lib/video";
+import { deleteCreative } from "@/app/actions";
 
 export type HomeVideo = {
   id: string;
@@ -35,8 +37,26 @@ function ShareButton({ url }: { url: string }) {
 }
 
 export default function LatestVideos({ videos }: { videos: HomeVideo[] }) {
+  const router = useRouter();
   const [open, setOpen] = useState<HomeVideo | null>(null);
-  const playable = videos.filter((v) => !!v.video_url);
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  const [deleting, startDelete] = useTransition();
+  const playable = videos.filter((v) => !!v.video_url && !removed.has(v.id));
+
+  function onDelete(v: HomeVideo) {
+    if (!confirm("Delete this video permanently? This can't be undone.")) return;
+    startDelete(async () => {
+      const r = await deleteCreative(v.id);
+      if (r.ok) {
+        setRemoved((s) => new Set(s).add(v.id));
+        setOpen(null);
+        router.refresh(); // re-sync server data + Home stats
+      } else {
+        alert(r.error || "Delete failed");
+      }
+    });
+  }
+
   if (playable.length === 0) return null;
 
   return (
@@ -97,6 +117,13 @@ export default function LatestVideos({ videos }: { videos: HomeVideo[] }) {
                 <Download size={14} /> Download
               </a>
               {open.video_url && <ShareButton url={open.video_url} />}
+              <button
+                onClick={() => onDelete(open)}
+                disabled={deleting}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-danger-soft)] px-3.5 py-2.5 text-[13px] font-semibold text-[var(--color-danger)] disabled:opacity-50"
+              >
+                <Trash2 size={14} /> {deleting ? "Deleting…" : "Delete"}
+              </button>
             </div>
           </div>
         )}

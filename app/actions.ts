@@ -509,6 +509,54 @@ export async function renderVideo(
   }
 }
 
+/** Parse a Supabase public storage URL into { bucket, path }, or null. */
+function parseStoragePublicUrl(
+  url: string | null | undefined,
+): { bucket: string; path: string } | null {
+  if (!url) return null;
+  const m = url.match(/\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/);
+  if (!m) return null;
+  return { bucket: m[1], path: decodeURIComponent(m[2].split("?")[0]) };
+}
+
+/**
+ * Delete a generated creative and its stored artifacts. Powers the "Delete"
+ * control on Home → Latest videos (and the Create studio). Removes the
+ * ad_creatives row, then best-effort drops the persisted video/still from our
+ * storage buckets so nothing is orphaned.
+ */
+export async function deleteCreative(id: string): Promise<ActionResult> {
+  if (!id) return { ok: false, error: "Missing id" };
+  try {
+    const sb = getServiceClient();
+    const { data } = await sb
+      .from("ad_creatives")
+      .select("video_url, image_url")
+      .eq("id", id)
+      .single();
+    const row = data as { video_url?: string | null; image_url?: string | null } | null;
+
+    const { error } = await sb.from("ad_creatives").delete().eq("id", id);
+    if (error) return { ok: false, error: error.message };
+
+    // Best-effort cleanup of our own buckets only; ignore failures.
+    for (const u of [row?.video_url, row?.image_url]) {
+      const loc = parseStoragePublicUrl(u);
+      if (loc && (loc.bucket === "ad-creatives" || loc.bucket === "ad-references")) {
+        try {
+          await sb.storage.from(loc.bucket).remove([loc.path]);
+        } catch {}
+      }
+    }
+
+    revalidatePath("/");
+    revalidatePath("/publish");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Delete failed" };
+  }
+}
+
 /**
  * Poll every in-progress kie job and persist results. Called on an interval by
  * the Studio while any creative is rendering. Returns how many flipped state.
