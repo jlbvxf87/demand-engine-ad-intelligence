@@ -2,7 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import Logo from "./Logo";
+import Image from "next/image";
 import { NAV } from "./nav";
 
 function isActive(pathname: string, href: string) {
@@ -17,11 +17,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-dvh w-full md:flex">
       {/* ── Desktop side rail ───────────────────────────────────────────── */}
       <aside className="hidden md:flex md:w-[240px] md:flex-col md:fixed md:inset-y-0 md:border-r md:border-[var(--color-line)] md:bg-[var(--color-surface)] md:px-4 md:py-5">
-        <div className="flex items-center gap-2 px-2 pb-6">
-          <Logo size={24} />
-          <span className="text-[17px] font-extrabold tracking-tight">
-            Demand Engine
-          </span>
+        <div className="flex items-center px-2 pb-6">
+          <Image
+            src="/de-logo.png"
+            alt="Demand Engine"
+            width={1175}
+            height={350}
+            priority
+            className="h-11 w-auto"
+          />
         </div>
 
         <nav className="flex flex-col gap-1">
@@ -63,9 +67,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex min-h-dvh w-full flex-col md:pl-[240px]">
         {/* Mobile header */}
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-canvas)]/70 px-4 py-3 backdrop-blur-xl md:hidden">
-          <div className="flex items-center gap-2.5">
-            <Logo size={22} />
-            <span className="text-[16.5px] font-extrabold tracking-[-0.02em]">Demand Engine</span>
+          <div className="flex items-center">
+            <Image
+              src="/de-logo.png"
+              alt="Demand Engine"
+              width={1175}
+              height={350}
+              priority
+              className="h-8 w-auto"
+            />
           </div>
           <span className="grid h-8 w-8 place-items-center rounded-full bg-[var(--color-accent-soft)] text-[12px] font-extrabold text-[var(--color-accent)] shadow-[inset_0_0_0_1px_rgba(23,46,215,0.12)]">
             JB
