@@ -262,9 +262,19 @@ export async function POST(req: Request) {
 
     let metaRes: Response;
     try {
-      metaRes = await fetch(`${META_AD_LIBRARY_URL}?${params.toString()}`);
+      // 20s per-request timeout so a hung Meta request can't block the function
+      // until maxDuration. An AbortError is treated like any other network
+      // failure below — it breaks the loop cleanly.
+      metaRes = await fetch(`${META_AD_LIBRARY_URL}?${params.toString()}`, {
+        signal: AbortSignal.timeout(20000),
+      });
     } catch (e) {
-      networkError = e instanceof Error ? e.message : 'network failure';
+      networkError =
+        e instanceof Error
+          ? e.name === 'TimeoutError' || e.name === 'AbortError'
+            ? 'Meta request timed out after 20s'
+            : e.message
+          : 'network failure';
       break;
     }
 
@@ -438,11 +448,18 @@ export async function POST(req: Request) {
   // Insert in chunks — Supabase has row limits per insert
   const CHUNK = 100;
   const inserted: unknown[] = [];
+  let insertWarning: string | null = null;
 
   for (let i = 0; i < rowsWithSearchId.length; i += CHUNK) {
     const chunk = rowsWithSearchId.slice(i, i + CHUNK);
     const { data, error } = await supabase.from('spy_ads').insert(chunk).select();
-    if (error) continue; // skip bad chunks, don't fail the whole search
+    if (error) {
+      // Best-effort: don't fail the whole search on a bad chunk, but capture
+      // the error so we can report partial saves truthfully (don't overwrite an
+      // earlier warning — keep the first error message).
+      if (!insertWarning) insertWarning = error.message;
+      continue;
+    }
     if (data) inserted.push(...data);
   }
 
@@ -515,10 +532,15 @@ export async function POST(req: Request) {
     resolution, // null when not using advertiser_alias, or no match found
     meta: {
       total_fetched: uniqueAds.length,
-      added: newRows.length,
+      // Report the ACTUAL number of rows written, not the intended count — a
+      // chunk insert error silently drops rows, so newRows.length would lie.
+      added: inserted.length,
       already_had: alreadyHad,
       pages_loaded: pagesLoaded,
       elapsed_ms: Date.now() - started,
+      // Non-fatal: some chunks failed to insert. Surfaced so the client/UI can
+      // tell the user data was partially saved rather than silently lost.
+      ...(insertWarning ? { insert_warning: insertWarning } : {}),
     },
     diagnostic: buildDiagnostic({
       keyword, search_page_ids, ad_active_status, media_type,

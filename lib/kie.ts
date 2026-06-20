@@ -125,13 +125,30 @@ export async function submitKieVideo(o: SubmitOpts): Promise<{ taskId: string }>
     code?: number;
     msg?: string;
     message?: string;
-    data?: { taskId?: string };
+    taskId?: string;
+    data?: { taskId?: string; task_id?: string; id?: string };
   };
-  if (json?.code !== 200) {
-    throw new Error(json?.msg || json?.message || `Kie HTTP ${res.status}`);
+
+  // The unified jobs endpoint returns {code:200, data:{taskId}}, but the VEO and
+  // RUNWAY families (/veo/generate, /runway/generate) are a different API and may
+  // nest the id under a different key or omit the 200 envelope. Accept the first
+  // non-empty task id from any known shape rather than relying on code === 200.
+  const taskId =
+    json?.data?.taskId ||
+    json?.data?.task_id ||
+    json?.taskId ||
+    json?.data?.id ||
+    undefined;
+
+  // Only treat as a failure when there's no task id to poll. If we got an id,
+  // the job is (or will be) billing regardless of the envelope shape, so we must
+  // return it so the row can be polled instead of being wrongly marked failed.
+  if (!taskId) {
+    const msg = json?.msg || json?.message;
+    if (!res.ok) throw new Error(msg || `Kie HTTP ${res.status}`);
+    throw new Error(msg || "Kie returned no taskId");
   }
-  const taskId = json?.data?.taskId;
-  if (!taskId) throw new Error("Kie returned no taskId");
+
   return { taskId };
 }
 

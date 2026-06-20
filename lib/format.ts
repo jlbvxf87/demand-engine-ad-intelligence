@@ -1,13 +1,21 @@
 export function compact(n: number | null | undefined): string {
-  if (n == null) return "—";
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
-  return String(Math.round(n));
+  // Guard null/undefined/NaN/Infinity — never surface "NaN" to the UI; the "—"
+  // sentinel matches the existing "no value" convention callers rely on.
+  if (n == null || !Number.isFinite(n)) return "—";
+  // Compact the magnitude and re-apply the sign so negatives compact too
+  // (e.g. -1_500 → "-1.5K") rather than rendering uncompacted.
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return sign + (abs / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (abs >= 1_000) return sign + (abs / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
+  return sign + String(Math.round(abs));
 }
 
 export function money(lower: number | null, upper: number | null): string {
   if (lower == null && upper == null) return "—";
   const mid = ((lower ?? 0) + (upper ?? 0)) / 2;
+  // A non-finite mid would compact to "—"; emit the bare sentinel rather than "$—".
+  if (!Number.isFinite(mid)) return "—";
   return "$" + compact(mid);
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
@@ -79,6 +79,20 @@ export default function DecodeClient({
       } Avoid therapeutic claims.`
     : "";
   const [brief, setBrief] = useState(defaultBrief);
+
+  // The lazy initializer above only runs on first mount. When the source ad
+  // changes (e.g. /decode?ad=A -> /decode?ad=B reuses this component instance,
+  // or the async `ad` prop resolves after mount), re-sync `brief` to the freshly
+  // derived default. Track the last-seen ad id so we ONLY reset on a real
+  // identity change and never clobber the user's in-progress edits on
+  // unrelated re-renders.
+  const lastAdIdRef = useRef<AdRow["id"] | null | undefined>(ad?.id);
+  useEffect(() => {
+    if (ad?.id !== lastAdIdRef.current) {
+      lastAdIdRef.current = ad?.id;
+      setBrief(defaultBrief);
+    }
+  }, [ad?.id, defaultBrief]);
 
   if (!ad) {
     const rows: [string, string | undefined][] = urlResult

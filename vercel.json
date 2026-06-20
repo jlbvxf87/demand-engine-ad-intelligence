@@ -7,6 +7,10 @@
     {
       "path": "/api/spy/repersist-videos?limit=20",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/spy/sweep-renders?limit=40",
+      "schedule": "0 */6 * * *"
     }
   ]
 }

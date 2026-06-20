@@ -22,11 +22,28 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'url required' }, { status: 400 });
   }
 
+  let parsed: URL;
   try {
-    const parsed = new URL(storedUrl);
-    parsed.searchParams.set('access_token', token);
-    return NextResponse.redirect(parsed.toString());
+    parsed = new URL(storedUrl);
   } catch {
     return NextResponse.json({ error: 'Invalid snapshot URL' }, { status: 400 });
   }
+
+  // Only allow legitimate Facebook/Meta render_ad / snapshot hosts. Anything else
+  // would leak the live Meta access token (token exfiltration / open redirect).
+  const host = parsed.hostname.toLowerCase();
+  const isAllowedHost =
+    host === 'facebook.com' ||
+    host === 'www.facebook.com' ||
+    host.endsWith('.facebook.com') ||
+    host.endsWith('.fbcdn.net');
+  if (!isAllowedHost) {
+    return NextResponse.json(
+      { error: 'Only Facebook ad-library/snapshot URLs are allowed.' },
+      { status: 400 }
+    );
+  }
+
+  parsed.searchParams.set('access_token', token);
+  return NextResponse.redirect(parsed.toString());
 }

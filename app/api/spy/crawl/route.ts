@@ -4,6 +4,7 @@ import { isAdminAuthed } from '@/lib/admin-auth';
 import { isMachineAuthed } from '@/lib/machine-auth';
 import { getServiceClient } from '@/lib/supabase/server';
 import { toSiteUrl } from '@/lib/url';
+import { unsafeFetchReason } from "@/lib/ssrf";
 import { BROWSER_UA } from "@/lib/http";
 
 export const runtime = 'nodejs';
@@ -128,6 +129,12 @@ export async function POST(req: Request) {
     );
   }
 
+  const unsafe = unsafeFetchReason(url);
+  if (unsafe) {
+    await supabase.from('spy_ads').update({ crawl_status: 'error' }).eq('id', ad_id);
+    return NextResponse.json({ error: `Can't crawl that URL — ${unsafe}` }, { status: 400 });
+  }
+
   await supabase.from('spy_ads').update({ crawl_status: 'crawling' }).eq('id', ad_id);
 
   try {
@@ -213,7 +220,15 @@ ${html}`,
       }],
     });
 
-    const rawText = message.content[0].type === 'text' ? message.content[0].text.trim() : '{}';
+    const block = message.content.find((c) => c.type === 'text');
+    const rawText = block && block.type === 'text' ? block.text.trim() : '';
+    if (!rawText) {
+      await supabase.from('spy_ads').update({ crawl_status: 'error' }).eq('id', ad_id);
+      return NextResponse.json(
+        { error: 'The analysis model returned an empty response — nothing to parse.' },
+        { status: 502 },
+      );
+    }
     let intel: Record<string, unknown> = {};
     try {
       intel = JSON.parse(rawText);

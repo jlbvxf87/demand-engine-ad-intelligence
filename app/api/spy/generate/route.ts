@@ -197,12 +197,23 @@ export async function POST(req: Request) {
       messages: [{ role: 'user', content: prompt }],
     });
 
-    const rawText = message.content[0].type === 'text' ? message.content[0].text.trim() : '{}';
+    // Find the first text block rather than assuming content[0] is text — an
+    // empty/refused/non-text first block (e.g. stop_reason "refusal" returns an
+    // empty content array) would otherwise make content[0] undefined and throw.
+    const block = message.content.find((c) => c.type === 'text');
+    const raw = block && block.type === 'text' ? block.text.trim() : '';
+    if (!raw) {
+      return NextResponse.json(
+        { error: 'Model returned no text content (possible refusal or empty response)' },
+        { status: 502 }
+      );
+    }
+
     let result: Record<string, unknown> = {};
     try {
-      result = JSON.parse(rawText);
+      result = JSON.parse(raw);
     } catch {
-      const match = rawText.match(/\{[\s\S]*\}/);
+      const match = raw.match(/\{[\s\S]*\}/);
       if (match) result = JSON.parse(match[0]);
     }
 

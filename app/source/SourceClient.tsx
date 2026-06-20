@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Search, ArrowRight, ExternalLink, Loader2, CornerDownRight } from "lucide-react";
 import {
@@ -220,6 +220,7 @@ export default function SourceClient({
   // Recreate a winner on-brand: draft copy + stage the creative as the visual
   // reference, then drop into Create to refine / render.
   async function runRecreate(ad: AdRow) {
+    if (recreating) return; // guard against double-fire (paid generation)
     setRecreating(true);
     setNote(null);
     const r = await recreate(ad.id);
@@ -248,6 +249,7 @@ export default function SourceClient({
   // recreate() is expensive (landing crawl + Claude generation + DB writes per
   // ad), so run with bounded concurrency and cap runaway bulk selections.
   async function recreateSelected() {
+    if (recreating) return; // guard against double-fire (paid generation)
     let ids = [...selected];
     if (!ids.length) return;
 
@@ -307,6 +309,24 @@ export default function SourceClient({
     () => scaled.filter((w) => indOk(w.ad)),
     [scaled, independentOnly],
   );
+
+  // Prune the bulk-select Set to only ads still visible in the rendered list
+  // (crv). The list changes on Load more, the "Independent only" toggle, and
+  // library-search swaps — without this, recreateSelected() could fire expensive
+  // paid recreate() calls on ads the user can no longer see. Only setState when
+  // something actually changed to avoid a render loop.
+  useEffect(() => {
+    const visible = new Set(crv.map((c) => c.id));
+    setSelected((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (visible.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [crv]);
   const byId = useMemo(() => new Map(allCreatives.map((c) => [c.id, c])), [allCreatives]);
   const moreAvailable = libResults === null && allCreatives.length < creativesTotal && !exhausted;
 
@@ -628,9 +648,9 @@ export default function SourceClient({
           />
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {adv.map((a) => (
+            {adv.map((a, i) => (
               <button
-                key={a.page_name}
+                key={a.page_id || a.page_name || i}
                 onClick={() => setAdvDetail(a)}
                 className="flex flex-col gap-2.5 rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] p-3.5 text-left shadow-[0_1px_2px_rgba(16,21,27,0.03),0_10px_28px_-16px_rgba(16,21,27,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_2px_4px_rgba(16,21,27,0.04),0_18px_40px_-20px_rgba(16,21,27,0.20)]"
               >
@@ -842,8 +862,8 @@ export default function SourceClient({
           />
         ) : (
           <div className="flex flex-col gap-3">
-            {identity.map((p) => (
-              <Card key={p.persona} className="p-4">
+            {identity.map((p, i) => (
+              <Card key={p.page_id || p.persona || i} className="p-4">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-[14.5px] font-bold">{p.persona}</p>
                   <WinnerBadge badge={p.badge} />

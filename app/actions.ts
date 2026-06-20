@@ -9,6 +9,7 @@ import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { buildMasterScript } from "@/lib/storyboard";
 import { persistVideoToStorage } from "@/lib/persist";
 import { BROWSER_UA } from "@/lib/http";
+import { unsafeFetchReason } from "@/lib/ssrf";
 
 function parseJson(raw: string): Record<string, unknown> {
   try {
@@ -278,7 +279,15 @@ export async function recreate(
     //    returns the inserted ids in order, and ids[0] is the hero (the i===0 row
     //    that carries the still). Pinning by that id is deterministic — no more
     //    arbitrary created_at re-query that could hit the wrong variant.
-    const refUrl = ad?.creative_media_type === "image" ? ad?.creative_media_url ?? null : null;
+    // Only pin the original creative if it's a PERMANENT (Supabase storage) URL.
+    // Raw fbcdn links expire and 404 later, so pinning one would both break the
+    // hero AND throw away the generated still. When it's not persisted media,
+    // leave the generated still in place (refUrl = null).
+    const persistedMedia =
+      ad?.creative_media_type === "image" &&
+      typeof ad?.creative_media_url === "string" &&
+      ad.creative_media_url.includes("supabase.co/storage");
+    const refUrl = persistedMedia ? ad!.creative_media_url ?? null : null;
     const heroId = (gen.data as { ids?: string[] })?.ids?.[0] ?? null;
     if (heroId && refUrl) {
       try {
@@ -315,6 +324,8 @@ export async function recreate(
 export async function decodeUrl(url: string): Promise<ActionResult> {
   const u = (url || "").trim();
   if (!/^https?:\/\//i.test(u)) return { ok: false, error: "Enter a valid http(s) URL" };
+  const bad = unsafeFetchReason(u);
+  if (bad) return { ok: false, error: `Can't fetch that URL — ${bad}` };
   try {
     let pageText = "";
     try {
@@ -528,14 +539,21 @@ export async function pollVideoJobs(): Promise<ActionResult> {
           // re-upload to permanent Supabase Storage. Fall back to the temp URL
           // if persistence fails, so the video is never lost.
           const permanent = await persistVideoToStorage(r.videoUrl, row.id);
-          await sb
+          const { data: flipped } = await sb
             .from("ad_creatives")
             .update({ video_url: permanent ?? r.videoUrl, video_status: "ready" })
-            .eq("id", row.id);
-          updated++;
+            .eq("id", row.id)
+            .in("video_status", ["queued", "rendering"])
+            .select("id");
+          if (flipped && flipped.length > 0) updated++;
         } else if (r.state === "failed") {
-          await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", row.id);
-          updated++;
+          const { data: flipped } = await sb
+            .from("ad_creatives")
+            .update({ video_status: "failed" })
+            .eq("id", row.id)
+            .in("video_status", ["queued", "rendering"])
+            .select("id");
+          if (flipped && flipped.length > 0) updated++;
         }
       } catch {
         // transient — leave it queued, retry next tick
@@ -584,9 +602,17 @@ async function triggerReadyStoryboards(sb: SB): Promise<void> {
       await sb.from("storyboards").update({ status: "failed", final_status: "failed" }).eq("id", s.id);
       continue;
     }
-    await sb.from("storyboards").update({ status: "stitching", final_status: "stitching" }).eq("id", s.id);
+    // Claim the storyboard atomically so two concurrent ticks can't both fire
+    // the worker — only the tick whose update flipped it from "generating" wins.
+    const { data: claimed } = await sb
+      .from("storyboards")
+      .update({ status: "stitching", final_status: "stitching" })
+      .eq("id", s.id)
+      .eq("status", "generating")
+      .select("id");
+    if (!claimed || claimed.length === 0) continue;
     try {
-      await fetch(`${worker.replace(/\/$/, "")}/stitch`, {
+      const res = await fetch(`${worker.replace(/\/$/, "")}/stitch`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -596,8 +622,9 @@ async function triggerReadyStoryboards(sb: SB): Promise<void> {
         }),
         cache: "no-store",
       });
+      if (!res.ok) throw new Error(`stitch worker HTTP ${res.status}`);
     } catch {
-      // worker unreachable — revert so we retry next tick
+      // worker unreachable or non-2xx — revert so we retry next tick
       await sb.from("storyboards").update({ status: "generating", final_status: "none" }).eq("id", s.id);
     }
   }

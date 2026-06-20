@@ -37,10 +37,19 @@ export async function scrapeAndStoreCreative(adId: string): Promise<ScrapeResult
   let renderUrl: string;
   try {
     const u = new URL(ad.ad_snapshot_url);
+    // Guard against poisoned/forged ad_snapshot_url values in the DB: only attach
+    // the live Meta access token (and only navigate the scraper) when the host is
+    // a Facebook host. Otherwise the token would leak to an attacker-controlled host.
+    const host = u.hostname.toLowerCase();
+    const isFacebookHost =
+      host === "facebook.com" || host === "www.facebook.com" || host.endsWith(".facebook.com");
+    if (!isFacebookHost) {
+      return { ok: false, error: "Snapshot URL is not a Facebook ad URL" };
+    }
     u.searchParams.set("access_token", token);
     renderUrl = u.toString();
   } catch {
-    return { ok: false, error: "Invalid snapshot URL" };
+    return { ok: false, error: "Snapshot URL is not a Facebook ad URL" };
   }
 
   try {

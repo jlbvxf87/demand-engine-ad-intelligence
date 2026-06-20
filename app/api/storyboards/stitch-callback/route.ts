@@ -11,11 +11,12 @@ export const dynamic = "force-dynamic";
  */
 export async function POST(req: Request) {
   const secret = process.env.STITCH_WEBHOOK_SECRET;
-  if (secret) {
-    const url = new URL(req.url);
-    if (url.searchParams.get("key") !== secret) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  if (!secret) {
+    return NextResponse.json({ error: "Stitch callback not configured" }, { status: 503 });
+  }
+  const url = new URL(req.url);
+  if (url.searchParams.get("key") !== secret) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   let body: { storyboard_id?: string; video_url?: string };
