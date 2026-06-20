@@ -509,6 +509,30 @@ export async function getGeneratedCreatives(limit = 24): Promise<Creative[]> {
   }
 }
 
+/** Live Kie.ai credit balance (powers the Home "credits" indicator). Cached 90s
+ *  + timeout-guarded so a slow/down Kie never stalls the Home page. null on any
+ *  error so the indicator just hides. */
+export const getKieCredits = unstable_cache(
+  async (): Promise<number | null> => {
+    try {
+      const key = process.env.KIE_API_KEY;
+      if (!key) return null;
+      const base = (process.env.KIE_API_BASE_URL || "https://api.kie.ai").replace(/\/$/, "");
+      const r = await fetch(`${base}/api/v1/chat/credit`, {
+        headers: { Authorization: `Bearer ${key}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      });
+      const j = (await r.json().catch(() => null)) as { data?: number } | null;
+      return typeof j?.data === "number" ? j.data : null;
+    } catch {
+      return null;
+    }
+  },
+  ["kie-credits"],
+  { revalidate: 90 },
+);
+
 export type HomeStats = { winners: number; creatives: number; videos: number; stories: number };
 
 /** Live counts for the Home dashboard. Defensive — zeros on error. */

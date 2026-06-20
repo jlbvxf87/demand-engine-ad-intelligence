@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { Search, ArrowRight, Sparkles, ExternalLink } from "lucide-react";
+import { Search, ArrowRight, Sparkles, ExternalLink, Wallet } from "lucide-react";
 import { Card } from "@/components/ui";
-import { getHomeStats, getScaledWinners, getGeneratedCreatives } from "@/lib/data";
+import { getHomeStats, getScaledWinners, getGeneratedCreatives, getKieCredits } from "@/lib/data";
 import { compact, initials } from "@/lib/format";
 import { toDomain } from "@/lib/url";
 import { adHook, metaAdUrl } from "@/lib/ad";
@@ -17,11 +17,41 @@ const STAT_ACCENT = [
   "var(--color-decode)",
 ];
 
+/** Kie render-credit balance, color-coded so you know when to top up. */
+function CreditPill({ credits }: { credits: number | null }) {
+  if (credits == null) return null;
+  const n = Math.round(credits);
+  const tone = n >= 800 ? "win" : n >= 200 ? "warn" : "danger";
+  const low = n < 800;
+  return (
+    <div
+      className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-bold"
+      style={{ background: `var(--color-${tone}-soft)`, color: `var(--color-${tone})` }}
+      title="Kie.ai render credits — used by every video / voice render"
+    >
+      <Wallet size={13} />
+      <span className="tabular-nums">{n.toLocaleString()}</span>
+      <span className="hidden sm:inline">credits</span>
+      {low && (
+        <a
+          href="https://kie.ai/"
+          target="_blank"
+          rel="noreferrer"
+          className="ml-0.5 underline underline-offset-2"
+        >
+          Top up
+        </a>
+      )}
+    </div>
+  );
+}
+
 export default async function HomePage() {
-  const [stats, scaledRaw, creatives] = await Promise.all([
+  const [stats, scaledRaw, creatives, credits] = await Promise.all([
     getHomeStats(),
     getScaledWinners(40),
     getGeneratedCreatives(12),
+    getKieCredits(),
   ]);
   // ONLY proven winners: creatives an independent operator is running at SCALE
   // (the same ad duplicated across many ads / landing pages). Ranked by volume,
@@ -51,12 +81,17 @@ export default async function HomePage() {
 
   return (
     <div>
-      <h1 className="text-[26px] font-extrabold leading-tight tracking-tight md:text-[30px]">
-        Creative Factory
-      </h1>
-      <p className="mb-5 mt-1 text-[14px] text-[var(--color-ink-muted)]">
-        Find winners → decode why → create → publish to test.
-      </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-[26px] font-extrabold leading-tight tracking-tight md:text-[30px]">
+            Creative Factory
+          </h1>
+          <p className="mb-5 mt-1 text-[14px] text-[var(--color-ink-muted)]">
+            Find winners → decode why → create → publish to test.
+          </p>
+        </div>
+        <CreditPill credits={credits} />
+      </div>
 
       {/* Live stats */}
       <div className="mb-5 grid grid-cols-4 divide-x divide-[var(--color-line)] overflow-hidden rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[0_1px_2px_rgba(16,27,22,0.04)]">
