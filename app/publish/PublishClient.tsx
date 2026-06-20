@@ -19,7 +19,10 @@ import { ScreenHeader, Card, Badge, EmptyState, Modal, Stat, Tabs } from "@/comp
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
 import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
-import { renderVideo, pollVideoJobs, deleteCreative } from "@/app/actions";
+import { renderVideo, renderSpokesperson, pollVideoJobs, deleteCreative } from "@/app/actions";
+
+// "spokesperson" is a render mode (lip-synced voice), not a base video model.
+type RenderModel = VideoProvider | "spokesperson";
 import ReplicatePanel from "./ReplicatePanel";
 import StoryboardPanel from "./StoryboardPanel";
 import CopyPanel from "./CopyPanel";
@@ -74,7 +77,7 @@ export default function PublishClient({
 }) {
   const router = useRouter();
   const [target, setTarget] = useState("meta");
-  const [model, setModel] = useState<VideoProvider>("seedance");
+  const [model, setModel] = useState<RenderModel>("seedance");
   const [review, setReview] = useState<Creative | null>(null);
   const [mode, setMode] = useState("replicate");
   const [pending, startTransition] = useTransition();
@@ -110,11 +113,17 @@ export default function PublishClient({
     };
   }, [polling, router]);
 
-  function render(id: string, provider: VideoProvider) {
+  // Spokesperson is a different render path (TTS → lip-sync); everything else is
+  // a normal video model. One helper routes to the right action.
+  function doRender(id: string, m: RenderModel) {
+    return m === "spokesperson" ? renderSpokesperson(id) : renderVideo(id, m);
+  }
+
+  function render(id: string, m: RenderModel) {
     setBusyId(id);
     setNote(null);
     startTransition(async () => {
-      const r = await renderVideo(id, provider);
+      const r = await doRender(id, m);
       setBusyId(null);
       if (!r.ok) setNote(r.error || "Render failed");
       else router.refresh();
@@ -126,7 +135,7 @@ export default function PublishClient({
     setNote(null);
     startTransition(async () => {
       for (const c of stills) {
-        await renderVideo(c.id, model);
+        await doRender(c.id, model);
       }
       router.refresh();
     });
@@ -242,7 +251,7 @@ export default function PublishClient({
             <span className="font-semibold text-[var(--color-ink-muted)]">Model</span>
             <select
               value={model}
-              onChange={(e) => setModel(e.target.value as VideoProvider)}
+              onChange={(e) => setModel(e.target.value as RenderModel)}
               className="bg-transparent text-[13px] font-bold outline-none"
             >
               {VIDEO_PROVIDERS.map((p) => (
@@ -250,6 +259,7 @@ export default function PublishClient({
                   {p.label}
                 </option>
               ))}
+              <option value="spokesperson">🎤 Spokesperson (speaks your script)</option>
             </select>
           </label>
           {stills.length > 0 && (
@@ -262,6 +272,11 @@ export default function PublishClient({
               {pending ? <Loader2 size={14} className="animate-spin" /> : <Clapperboard size={14} />}
               Render {stills.length} still{stills.length > 1 ? "s" : ""}
             </button>
+          )}
+          {model === "spokesperson" && (
+            <span className="w-full text-[11px] text-[var(--color-ink-muted)]">
+              🎤 Spokesperson voices your script (hook + bridge + CTA) and lip-syncs it onto the still — best on a clear face. Two render steps, so it takes a bit longer.
+            </span>
           )}
         </div>
       )}
@@ -443,7 +458,7 @@ export default function PublishClient({
                 <>
                   <select
                     value={model}
-                    onChange={(e) => setModel(e.target.value as VideoProvider)}
+                    onChange={(e) => setModel(e.target.value as RenderModel)}
                     className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-2.5 text-[13px] font-bold outline-none"
                   >
                     {VIDEO_PROVIDERS.map((p) => (
@@ -451,6 +466,7 @@ export default function PublishClient({
                         {p.label}
                       </option>
                     ))}
+                    <option value="spokesperson">🎤 Spokesperson (speaks your script)</option>
                   </select>
                   <button
                     onClick={() => render(review.id, model)}

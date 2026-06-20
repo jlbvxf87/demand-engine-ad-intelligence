@@ -8,6 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { buildMasterScript } from "@/lib/storyboard";
 import { reconcileStoryboards } from "@/lib/storyboard-reconcile";
+import { submitTTS, advanceSpokesperson } from "@/lib/voice";
 import { persistVideoToStorage } from "@/lib/persist";
 import { BROWSER_UA } from "@/lib/http";
 import { unsafeResolvedFetchReason } from "@/lib/ssrf";
@@ -609,16 +610,64 @@ export async function pollVideoJobs(): Promise<ActionResult> {
       }
     }
 
-    // Re-render any failed scenes (self-heal) and stitch storyboards once ready.
+    // Advance two-stage spokesperson renders (TTS → lip-sync), and re-render any
+    // failed storyboard scenes + stitch once ready.
+    const spokesAdvanced = await advanceSpokesperson(sb);
     await reconcileStoryboards(sb, await baseUrl());
 
-    if (updated) {
+    if (updated || spokesAdvanced) {
       revalidatePath("/publish");
       revalidatePath("/rebuild");
     }
     return { ok: true, data: { pending: rows.length, updated } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Poll failed" };
+  }
+}
+
+/**
+ * Spokesperson render: turn the creative's copy into a clip where the person in
+ * its still actually SPEAKS the script with synced lips. Two-stage Kie job —
+ * this kicks off stage 1 (TTS); advanceSpokesperson() (poll loop + cron) carries
+ * it through lip-sync to a finished video.
+ */
+export async function renderSpokesperson(creativeId: string): Promise<ActionResult> {
+  try {
+    const sb = getServiceClient();
+    const { data } = await sb
+      .from("ad_creatives")
+      .select("id, image_url, hook_text, bridge_text, cta_text")
+      .eq("id", creativeId)
+      .single();
+    const cr = data as
+      | { image_url: string | null; hook_text: string | null; bridge_text: string | null; cta_text: string | null }
+      | null;
+    if (!cr) return { ok: false, error: "Creative not found" };
+    if (!cr.image_url) {
+      return { ok: false, error: "Spokesperson needs a still of a person — generate or attach one first." };
+    }
+    const script = [cr.hook_text, cr.bridge_text, cr.cta_text].filter(Boolean).join(" ").trim();
+    if (!script) return { ok: false, error: "No copy to voice — add script text first." };
+
+    const { taskId } = await submitTTS(script);
+    const { error: upErr } = await sb
+      .from("ad_creatives")
+      .update({
+        video_provider: "spokesperson",
+        video_status: "rendering",
+        render_stage: "tts",
+        tts_job_id: taskId,
+        t2v_job_id: null,
+        video_url: null,
+      })
+      .eq("id", creativeId);
+    if (upErr) return { ok: false, error: `Couldn't start spokesperson render — ${upErr.message}` };
+
+    revalidatePath("/publish");
+    revalidatePath("/rebuild");
+    return { ok: true, data: { stage: "tts", task_id: taskId } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Spokesperson render failed" };
   }
 }
 

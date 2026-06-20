@@ -29,7 +29,13 @@ const LABELS: Record<VideoProvider, string> = {
   runway: "Runway Gen-4",
 };
 
+// "spokesperson" is a render MODE (TTS → lip-sync), not a base video model, so
+// it's intentionally NOT a VideoProvider (the video poll loop skips it; the
+// voice pipeline owns it). It still needs a display label.
+export const SPOKESPERSON = "spokesperson";
+
 export function providerLabel(p: string | null | undefined): string {
+  if (p === SPOKESPERSON) return "Spokesperson";
   return (p && LABELS[p as VideoProvider]) || "—";
 }
 

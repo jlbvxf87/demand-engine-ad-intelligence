@@ -5,6 +5,7 @@ import { getServiceClient } from "@/lib/supabase/server";
 import { pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { persistVideoToStorage } from "@/lib/persist";
 import { reconcileStoryboards } from "@/lib/storyboard-reconcile";
+import { advanceSpokesperson } from "@/lib/voice";
 
 /** Public origin for the stitch callback, from the proxied request headers. */
 function originOf(req: Request): string {
@@ -110,8 +111,11 @@ async function run(req: Request) {
 
   const rows = (data ?? []) as SweepRow[];
   if (rows.length === 0) {
-    // No in-progress clips, but storyboards may still need a failed scene
-    // re-rendered (self-heal) or a final stitch.
+    // No single-clip renders in flight, but spokesperson stages and storyboards
+    // may still need advancing (self-heal scenes, stitch, TTS→lip-sync).
+    try {
+      await advanceSpokesperson(sb);
+    } catch {}
     try {
       await reconcileStoryboards(sb, originOf(req));
     } catch {}
@@ -173,8 +177,11 @@ async function run(req: Request) {
   const updated = outcomes.filter((o) => o !== "noop").length;
   const failedStale = outcomes.filter((o) => o === "failed-stale").length;
 
-  // Self-heal failed storyboard scenes + stitch when ready — works even when the
-  // Studio tab is closed and the client poll loop isn't running.
+  // Advance spokesperson stages + self-heal/stitch storyboards — works even when
+  // the Studio tab is closed and the client poll loop isn't running.
+  try {
+    await advanceSpokesperson(sb);
+  } catch {}
   try {
     await reconcileStoryboards(sb, originOf(req));
   } catch {}
