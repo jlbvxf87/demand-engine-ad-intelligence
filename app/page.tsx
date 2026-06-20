@@ -40,7 +40,10 @@ export default async function HomePage() {
   const videos = creatives.filter((c) => c.video_url).slice(0, 6);
 
   const tiles = [
-    { label: "Winners", value: stats.winners, href: "/source" },
+    // This is the TOTAL ad library (every ad pulled), not literally "winners" —
+    // the proven/scaled winners are a small subset shown below. Labeling it
+    // "Ads" keeps it honest (4.7K ads collected, not 4.7K winners).
+    { label: "Ads", value: stats.winners, href: "/source" },
     { label: "Creatives", value: stats.creatives, href: "/publish" },
     { label: "Videos", value: stats.videos, href: "/publish" },
     { label: "Stories", value: stats.stories, href: "/publish" },

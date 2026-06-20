@@ -176,15 +176,21 @@ export default function SourceClient({
   const [pending, startTransition] = useTransition();
   const [note, setNote] = useState<string | null>(null);
 
-  // Find an ad ALREADY in the library (server-side, across all 2K+ — not just loaded).
-  async function findInLibrary() {
-    const q = libQuery.trim();
-    if (!q) {
+  // Search ads ALREADY in the library (server-side, across ALL of them — not just
+  // the loaded page). Drives the primary top search box; jumps to the All-ads
+  // tab to show the matches.
+  async function findInLibrary(q?: string) {
+    const term = (q ?? libQuery).trim();
+    if (!term) {
       setLibResults(null);
       return;
     }
+    setQuery(term);
+    setLibQuery(term);
+    setTab("creatives");
+    setNote(null);
     setLibSearching(true);
-    const r = await findSavedAds(q);
+    const r = await findSavedAds(term);
     setLibSearching(false);
     setLibResults(r.ok && r.rows ? r.rows : []);
   }
@@ -418,23 +424,45 @@ export default function SourceClient({
         badgeTone="source"
       />
 
-      {/* Search */}
-      <div className="mb-4 flex items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-3">
+      {/* Primary: search the ads you've ALREADY saved (your library) */}
+      <div className="mb-2 flex items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-3">
         <Search size={18} className="text-[var(--color-ink-muted)]" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && runSearch()}
-          placeholder="Search brand, page, doctor, hook…"
+          onKeyDown={(e) => e.key === "Enter" && findInLibrary(query)}
+          placeholder={`Search your ${creativesTotal.toLocaleString()} saved ads — brand, copy, domain, hook…`}
           className="w-full bg-transparent text-[15px] outline-none placeholder:text-[var(--color-ink-muted)]"
         />
+        {libResults !== null && (
+          <button onClick={clearLibSearch} className="shrink-0 text-[12px] font-semibold text-[var(--color-ink-muted)]">
+            Clear
+          </button>
+        )}
         <button
-          onClick={runSearch}
-          disabled={pending || !query.trim()}
+          onClick={() => findInLibrary(query)}
+          disabled={libSearching || !query.trim()}
           className="flex items-center gap-1 rounded-xl px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-40"
           style={{ background: ACCENT }}
         >
-          {pending ? <Loader2 size={14} className="animate-spin" /> : "Search"}
+          {libSearching ? <Loader2 size={14} className="animate-spin" /> : "Search"}
+        </button>
+      </div>
+      {/* Secondary: pull NEW ads from the live Meta Ad Library */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 px-1">
+        <span className="text-[11.5px] text-[var(--color-ink-muted)]">
+          Searches your {creativesTotal.toLocaleString()} saved ads. Need fresh ones?
+        </span>
+        <button
+          onClick={runSearch}
+          disabled={pending || !query.trim()}
+          className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40"
+        >
+          {pending ? <Loader2 size={13} className="animate-spin" /> : (
+            <>
+              <ExternalLink size={13} /> Pull new from Meta
+            </>
+          )}
         </button>
       </div>
 
@@ -529,7 +557,7 @@ export default function SourceClient({
         />
       </div>
       <p className="mb-4 px-1 text-[11px] text-[var(--color-ink-muted)]">
-        Set filters, then Search. Vertical filters the results shown.
+        Country / Status / Media / Window apply to “Pull new from Meta.” Vertical filters what’s shown.
       </p>
 
       {/* Tabs */}
@@ -696,31 +724,6 @@ export default function SourceClient({
       {/* ── Creatives (your saved library) ──────────────────────────────── */}
       {tab === "creatives" && (
         <div className="flex flex-col gap-3">
-          {/* Find an ad ALREADY in your library — searches all of them, not just loaded */}
-          <div className="flex items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-2.5">
-            <Search size={16} className="shrink-0 text-[var(--color-ink-muted)]" />
-            <input
-              value={libQuery}
-              onChange={(e) => setLibQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && findInLibrary()}
-              placeholder="Find a saved ad — brand, copy, or domain"
-              className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-[var(--color-ink-muted)]"
-            />
-            {libResults !== null && (
-              <button onClick={clearLibSearch} className="shrink-0 text-[12px] font-semibold text-[var(--color-ink-muted)]">
-                Clear
-              </button>
-            )}
-            <button
-              onClick={findInLibrary}
-              disabled={libSearching || !libQuery.trim()}
-              className="shrink-0 rounded-xl px-3 py-1.5 text-[12.5px] font-bold text-white disabled:opacity-40"
-              style={{ background: ACCENT }}
-            >
-              {libSearching ? <Loader2 size={13} className="animate-spin" /> : "Find"}
-            </button>
-          </div>
-
           {crv.length === 0 ? (
             <EmptyState
               icon={Search}
