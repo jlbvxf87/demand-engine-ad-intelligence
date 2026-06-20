@@ -41,22 +41,25 @@ function fmtElapsed(secs: number) {
   return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
 }
 
-/** Seconds a tile has been observed rendering (client-side; resets when it
- *  finishes). Gives an in-progress render a visible, counting-up timer. */
-function useRenderElapsed(active: boolean): number {
+/** Seconds a clip has been rendering. Anchored to the row's created_at (server
+ *  truth) so it shows REAL elapsed time and survives reloads — a stuck render
+ *  then reads its true age (e.g. 46:00) instead of resetting to 0:07. */
+function useRenderElapsed(active: boolean, sinceIso?: string): number {
   const [secs, setSecs] = useState(0);
-  const startRef = useRef<number | null>(null);
+  const startRef = useRef<number>(0);
+  if (active && startRef.current === 0) {
+    const t = sinceIso ? new Date(sinceIso).getTime() : NaN;
+    startRef.current = Number.isFinite(t) ? t : Date.now();
+  }
+  if (!active && startRef.current !== 0) startRef.current = 0;
   useEffect(() => {
     if (!active) {
-      startRef.current = null;
       setSecs(0);
       return;
     }
-    startRef.current = Date.now();
-    setSecs(0);
-    const iv = setInterval(() => {
-      if (startRef.current != null) setSecs(Math.floor((Date.now() - startRef.current) / 1000));
-    }, 1000);
+    const tick = () => setSecs(Math.max(0, Math.floor((Date.now() - startRef.current) / 1000)));
+    tick();
+    const iv = setInterval(tick, 1000);
     return () => clearInterval(iv);
   }, [active]);
   return secs;
@@ -493,7 +496,7 @@ export default function PublishClient({
 /* One vertical reel tile in the Studio grid. */
 function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
   const rendering = isRendering(c);
-  const elapsed = useRenderElapsed(rendering);
+  const elapsed = useRenderElapsed(rendering, c.created_at);
   return (
     <button
       onClick={onClick}
