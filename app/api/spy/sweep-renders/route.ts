@@ -4,6 +4,15 @@ import { isMachineAuthed } from "@/lib/machine-auth";
 import { getServiceClient } from "@/lib/supabase/server";
 import { pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { persistVideoToStorage } from "@/lib/persist";
+import { reconcileStoryboards } from "@/lib/storyboard-reconcile";
+
+/** Public origin for the stitch callback, from the proxied request headers. */
+function originOf(req: Request): string {
+  const h = req.headers;
+  const host = h.get("x-forwarded-host") ?? h.get("host");
+  const proto = h.get("x-forwarded-proto") ?? "https";
+  return host ? `${proto}://${host}` : new URL(req.url).origin;
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,6 +110,11 @@ async function run(req: Request) {
 
   const rows = (data ?? []) as SweepRow[];
   if (rows.length === 0) {
+    // No in-progress clips, but storyboards may still need a failed scene
+    // re-rendered (self-heal) or a final stitch.
+    try {
+      await reconcileStoryboards(sb, originOf(req));
+    } catch {}
     return NextResponse.json({ checked: 0, updated: 0, failedStale: 0, crawlReset });
   }
 
@@ -158,6 +172,12 @@ async function run(req: Request) {
 
   const updated = outcomes.filter((o) => o !== "noop").length;
   const failedStale = outcomes.filter((o) => o === "failed-stale").length;
+
+  // Self-heal failed storyboard scenes + stitch when ready — works even when the
+  // Studio tab is closed and the client poll loop isn't running.
+  try {
+    await reconcileStoryboards(sb, originOf(req));
+  } catch {}
 
   return NextResponse.json({ checked: rows.length, updated, failedStale, crawlReset });
 }

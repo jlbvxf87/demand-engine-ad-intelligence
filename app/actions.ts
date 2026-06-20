@@ -7,6 +7,7 @@ import { getWinningCreatives, searchLibrary as searchLibraryData, type AdRow } f
 import Anthropic from "@anthropic-ai/sdk";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { buildMasterScript } from "@/lib/storyboard";
+import { reconcileStoryboards } from "@/lib/storyboard-reconcile";
 import { persistVideoToStorage } from "@/lib/persist";
 import { BROWSER_UA } from "@/lib/http";
 import { unsafeResolvedFetchReason } from "@/lib/ssrf";
@@ -608,8 +609,8 @@ export async function pollVideoJobs(): Promise<ActionResult> {
       }
     }
 
-    // When a storyboard's scenes are all done, hand them to the stitch worker.
-    await triggerReadyStoryboards(sb);
+    // Re-render any failed scenes (self-heal) and stitch storyboards once ready.
+    await reconcileStoryboards(sb, await baseUrl());
 
     if (updated) {
       revalidatePath("/publish");
@@ -618,63 +619,6 @@ export async function pollVideoJobs(): Promise<ActionResult> {
     return { ok: true, data: { pending: rows.length, updated } };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Poll failed" };
-  }
-}
-
-type SB = ReturnType<typeof getServiceClient>;
-
-/** Fire the stitch worker for any storyboard whose scene clips are all finished. */
-async function triggerReadyStoryboards(sb: SB): Promise<void> {
-  const worker = process.env.STITCH_WORKER_URL;
-  if (!worker) return; // no worker configured yet — scenes still usable individually
-  const { data: stories } = await sb
-    .from("storyboards")
-    .select("id, clip_count")
-    .eq("status", "generating");
-  for (const s of (stories || []) as { id: string; clip_count: number }[]) {
-    const { data: clips } = await sb
-      .from("ad_creatives")
-      .select("scene_index, video_url, video_status")
-      .eq("storyboard_id", s.id)
-      .order("scene_index", { ascending: true });
-    const rows = (clips || []) as {
-      scene_index: number;
-      video_url: string | null;
-      video_status: string;
-    }[];
-    if (rows.length < s.clip_count) continue;
-    const allDone = rows.every((r) => r.video_status === "ready" || r.video_status === "failed");
-    if (!allDone) continue;
-    const urls = rows.filter((r) => r.video_url).map((r) => r.video_url as string);
-    if (urls.length < 2) {
-      await sb.from("storyboards").update({ status: "failed", final_status: "failed" }).eq("id", s.id);
-      continue;
-    }
-    // Claim the storyboard atomically so two concurrent ticks can't both fire
-    // the worker — only the tick whose update flipped it from "generating" wins.
-    const { data: claimed } = await sb
-      .from("storyboards")
-      .update({ status: "stitching", final_status: "stitching" })
-      .eq("id", s.id)
-      .eq("status", "generating")
-      .select("id");
-    if (!claimed || claimed.length === 0) continue;
-    try {
-      const res = await fetch(`${worker.replace(/\/$/, "")}/stitch`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          storyboard_id: s.id,
-          clip_urls: urls,
-          callback_url: `${await baseUrl()}/api/storyboards/stitch-callback`,
-        }),
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error(`stitch worker HTTP ${res.status}`);
-    } catch {
-      // worker unreachable or non-2xx — revert so we retry next tick
-      await sb.from("storyboards").update({ status: "generating", final_status: "none" }).eq("id", s.id);
-    }
   }
 }
 
@@ -741,6 +685,7 @@ export async function createStoryboard(input: {
           creative_type: "scene",
           video_status: "rendering",
           video_provider: provider,
+          video_attempts: 1, // this initial submit; reconciler retries up to the cap
         })
         .select("id")
         .single();

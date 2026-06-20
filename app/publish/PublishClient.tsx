@@ -13,12 +13,13 @@ import {
   Loader2,
   CheckCircle2,
   Film,
+  Trash2,
 } from "lucide-react";
 import { ScreenHeader, Card, Badge, EmptyState, Modal, Stat, Tabs } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
 import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
-import { renderVideo, pollVideoJobs } from "@/app/actions";
+import { renderVideo, pollVideoJobs, deleteCreative } from "@/app/actions";
 import ReplicatePanel from "./ReplicatePanel";
 import StoryboardPanel from "./StoryboardPanel";
 import CopyPanel from "./CopyPanel";
@@ -100,6 +101,21 @@ export default function PublishClient({
         await renderVideo(c.id, model);
       }
       router.refresh();
+    });
+  }
+
+  function del(id: string) {
+    if (!confirm("Delete this creative permanently? This can't be undone.")) return;
+    setBusyId(id);
+    setNote(null);
+    startTransition(async () => {
+      const r = await deleteCreative(id);
+      setBusyId(null);
+      if (!r.ok) setNote(r.error || "Delete failed");
+      else {
+        setReview(null);
+        router.refresh();
+      }
     });
   }
 
@@ -418,6 +434,13 @@ export default function PublishClient({
                   <Download size={14} /> Download
                 </a>
               )}
+              <button
+                onClick={() => del(review.id)}
+                disabled={pending && busyId === review.id}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-danger-soft)] px-3.5 py-2.5 text-[13px] font-semibold text-[var(--color-danger)] disabled:opacity-50"
+              >
+                <Trash2 size={14} /> {pending && busyId === review.id ? "Deleting…" : "Delete"}
+              </button>
             </div>
           </div>
         )}
