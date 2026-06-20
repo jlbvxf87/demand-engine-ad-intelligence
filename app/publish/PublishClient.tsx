@@ -77,7 +77,7 @@ export default function PublishClient({
 }) {
   const router = useRouter();
   const [target, setTarget] = useState("meta");
-  const [model, setModel] = useState<RenderModel>("seedance");
+  const [model, setModel] = useState<RenderModel>("kling");
   const [voice, setVoice] = useState(DEFAULT_VOICE);
   const [review, setReview] = useState<Creative | null>(null);
   const [mode, setMode] = useState("replicate");

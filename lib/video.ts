@@ -4,12 +4,15 @@
 export type VideoProvider = "seedance" | "kling" | "sora" | "veo" | "runway";
 export type VideoMode = "text-to-video" | "image-to-video";
 
+// Talking-head video models, ordered by native-voice reliability (Kling default).
+// Runway dropped (not a talking-head / silent). Seedance kept but flagged — it
+// renders the talking-head look but its audio is unreliable. Backend types below
+// still include them for any legacy rows; this is just the selectable list.
 export const VIDEO_PROVIDERS: { id: VideoProvider; label: string; maxDuration: number }[] = [
-  { id: "seedance", label: "Seedance 2.0", maxDuration: 15 },
-  { id: "kling", label: "Kling 3.0", maxDuration: 15 },
-  { id: "sora", label: "Sora 2", maxDuration: 15 },
-  { id: "veo", label: "Veo 3.1", maxDuration: 8 },
-  { id: "runway", label: "Runway Gen-4", maxDuration: 10 },
+  { id: "kling", label: "Kling 3.0 — talking head + voice", maxDuration: 15 },
+  { id: "veo", label: "Veo 3.1 — talking head + voice", maxDuration: 8 },
+  { id: "sora", label: "Sora 2 — talking head + voice", maxDuration: 15 },
+  { id: "seedance", label: "Seedance 2.0 — talking head, voice varies", maxDuration: 15 },
 ];
 
 /** Allowed clip durations (seconds) per model — drives the duration picker. */

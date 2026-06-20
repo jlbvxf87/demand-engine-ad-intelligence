@@ -474,12 +474,16 @@ export async function renderVideo(
       voice = (b as { brand_voice?: string } | null)?.brand_voice || "";
     }
 
+    // Frame every render as a TALKING-HEAD: a person looking into the camera and
+    // SPEAKING the copy aloud, so models with native voice (Kling/Veo/Sora) say
+    // it and animate the mouth — "pick a model + prompt → talking head + voice."
+    const script = [cr.hook_text, cr.bridge_text, cr.cta_text].filter(Boolean).join(" ").trim();
     const prompt = [
-      cr.hook_text,
-      cr.bridge_text,
-      cr.cta_text ? `CTA: ${cr.cta_text}.` : "",
+      script
+        ? `A person looking directly into the camera, speaking this line aloud as a UGC talking-head testimonial: "${script}".`
+        : "A person speaking directly to the camera, UGC talking-head testimonial.",
       voice ? `Brand voice: ${voice}.` : "",
-      "UGC testimonial style, vertical 9:16. Compliant — no therapeutic or guaranteed-outcome claims.",
+      "Selfie/handheld framing, vertical 9:16, natural lip movement and spoken delivery, authentic. Compliant — no therapeutic or guaranteed-outcome claims.",
     ]
       .filter(Boolean)
       .join(" ");

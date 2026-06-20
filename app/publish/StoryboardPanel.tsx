@@ -14,7 +14,7 @@ export default function StoryboardPanel() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [images, setImages] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState<VideoProvider>("seedance");
+  const [model, setModel] = useState<VideoProvider>("kling");
   const [duration, setDuration] = useState(5);
   const [sceneCount, setSceneCount] = useState(4);
   const [spokesperson, setSpokesperson] = useState(false);
