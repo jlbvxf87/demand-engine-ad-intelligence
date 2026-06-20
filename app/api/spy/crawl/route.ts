@@ -4,7 +4,7 @@ import { isAdminAuthed } from '@/lib/admin-auth';
 import { isMachineAuthed } from '@/lib/machine-auth';
 import { getServiceClient } from '@/lib/supabase/server';
 import { toSiteUrl } from '@/lib/url';
-import { unsafeFetchReason } from "@/lib/ssrf";
+import { unsafeResolvedFetchReason } from "@/lib/ssrf";
 import { BROWSER_UA } from "@/lib/http";
 
 export const runtime = 'nodejs';
@@ -129,13 +129,20 @@ export async function POST(req: Request) {
     );
   }
 
-  const unsafe = unsafeFetchReason(url);
+  const unsafe = await unsafeResolvedFetchReason(url);
   if (unsafe) {
     await supabase.from('spy_ads').update({ crawl_status: 'error' }).eq('id', ad_id);
     return NextResponse.json({ error: `Can't crawl that URL — ${unsafe}` }, { status: 400 });
   }
 
-  await supabase.from('spy_ads').update({ crawl_status: 'crawling' }).eq('id', ad_id);
+  // Stamp crawled_at when we BEGIN (not just on success). If this function is
+  // hard-killed mid-crawl (timeout/OOM) the row would otherwise sit on
+  // 'crawling' forever; the sweep-renders cron uses this timestamp to detect and
+  // reset stale crawls. On success the value is overwritten with the finish time.
+  await supabase
+    .from('spy_ads')
+    .update({ crawl_status: 'crawling', crawled_at: new Date().toISOString() })
+    .eq('id', ad_id);
 
   try {
     const pageRes = await fetch(url, {

@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import { isAdminAuthed } from '@/lib/admin-auth';
 import { isMachineAuthed } from '@/lib/machine-auth';
 import { getServiceClient } from '@/lib/supabase/server';
+import { SCALED_WINNERS_TAG } from '@/lib/data';
 import { looksLikeUrl, toSiteUrl } from '@/lib/url';
 
 export const runtime = 'nodejs';
@@ -452,16 +454,34 @@ export async function POST(req: Request) {
 
   for (let i = 0; i < rowsWithSearchId.length; i += CHUNK) {
     const chunk = rowsWithSearchId.slice(i, i + CHUNK);
-    const { data, error } = await supabase.from('spy_ads').insert(chunk).select();
-    if (error) {
+    // Insert via UPSERT with ON CONFLICT DO NOTHING on meta_ad_id. The SELECT
+    // pre-filter above handles the common case; this closes the concurrency race
+    // where two simultaneous searches both pass that check and try to insert the
+    // same ad — the DB unique index makes the second a no-op instead of a dup
+    // row. `.select()` returns only the rows actually inserted, so counts stay
+    // truthful. If the unique index isn't applied yet (migration pending), the
+    // conflict target doesn't exist and PostgREST errors — fall back to a plain
+    // insert so search keeps working regardless of deploy/migration order.
+    let res = await supabase
+      .from('spy_ads')
+      .upsert(chunk, { onConflict: 'meta_ad_id', ignoreDuplicates: true })
+      .select();
+    if (res.error && /on conflict|constraint|unique|exclusion|matching/i.test(res.error.message)) {
+      res = await supabase.from('spy_ads').insert(chunk).select();
+    }
+    if (res.error) {
       // Best-effort: don't fail the whole search on a bad chunk, but capture
       // the error so we can report partial saves truthfully (don't overwrite an
       // earlier warning — keep the first error message).
-      if (!insertWarning) insertWarning = error.message;
+      if (!insertWarning) insertWarning = res.error.message;
       continue;
     }
-    if (data) inserted.push(...data);
+    if (res.data) inserted.push(...res.data);
   }
+
+  // New ads landed — bust the scaled-winners cache so Home/Source reflect them
+  // promptly instead of serving the prior (now-stale) grouped ranking.
+  if (inserted.length > 0) revalidateTag(SCALED_WINNERS_TAG, { expire: 0 });
 
   // Sort by winner_score descending
   const sorted = [...inserted].sort(

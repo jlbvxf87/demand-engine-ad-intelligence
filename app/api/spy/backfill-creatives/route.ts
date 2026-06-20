@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import { revalidateTag } from "next/cache";
 import { isAdminAuthed } from "@/lib/admin-auth";
 import { isMachineAuthed } from "@/lib/machine-auth";
 import { getServiceClient } from "@/lib/supabase/server";
-import { getScaledWinners } from "@/lib/data";
+import { getScaledWinners, SCALED_WINNERS_TAG } from "@/lib/data";
 import { scrapeAndStoreCreative } from "@/lib/scrape";
 
 export const runtime = "nodejs";
@@ -105,6 +106,10 @@ async function run(req: Request) {
 
   const results = await mapLimit(ids, CONCURRENCY, (id) => scrapeAndStoreCreative(id));
   const succeeded = results.filter((r) => r.ok && r.media_url).length;
+
+  // New creatives just landed on representative ads — bust the scaled-winners
+  // cache so Home/Source show the images now instead of waiting out the TTL.
+  if (succeeded > 0) revalidateTag(SCALED_WINNERS_TAG, { expire: 0 });
 
   // How many are still missing after this run (for visibility / scheduling).
   const { count: remaining } = await sb

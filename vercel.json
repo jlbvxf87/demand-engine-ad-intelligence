@@ -11,6 +11,10 @@
     {
       "path": "/api/spy/sweep-renders?limit=40",
       "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/spy/backfill-creatives?retryNone=1&limit=20",
+      "schedule": "0 9 * * *"
     }
   ]
 }

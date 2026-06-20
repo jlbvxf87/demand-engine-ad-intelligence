@@ -18,6 +18,10 @@ const CONCURRENCY = 4;
 // forever.
 const STALE_RENDER_MS = 2 * 60 * 60 * 1000; // 2 hours
 
+// A landing-page crawl stuck on 'crawling' past this is treated as dead (the
+// crawl function was killed mid-run) and reset to 'pending' so it can re-run.
+const STALE_CRAWL_MS = 15 * 60 * 1000; // 15 minutes
+
 /** Vercel cron hits this with `Authorization: Bearer <CRON_SECRET>`. */
 function isCronAuthed(req: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -67,6 +71,25 @@ async function run(req: Request) {
 
   const sb = getServiceClient();
 
+  // ── Unstick dead landing-page crawls ──────────────────────────────────────
+  // If the crawl route died after marking 'crawling' but before writing
+  // 'done'/'error', the row hangs on 'crawling' forever. Reset any older than
+  // the cutoff (or with a null start stamp from before this was tracked) back to
+  // 'pending' so Decode/recreate can re-attempt.
+  let crawlReset = 0;
+  try {
+    const crawlCutoff = new Date(Date.now() - STALE_CRAWL_MS).toISOString();
+    const { data: reset } = await sb
+      .from("spy_ads")
+      .update({ crawl_status: "pending" })
+      .eq("crawl_status", "crawling")
+      .or(`crawled_at.is.null,crawled_at.lt.${crawlCutoff}`)
+      .select("id");
+    crawlReset = reset?.length ?? 0;
+  } catch {
+    crawlReset = 0;
+  }
+
   const { data, error } = await sb
     .from("ad_creatives")
     .select("id, t2v_job_id, video_provider, video_status, created_at")
@@ -78,7 +101,7 @@ async function run(req: Request) {
 
   const rows = (data ?? []) as SweepRow[];
   if (rows.length === 0) {
-    return NextResponse.json({ checked: 0, updated: 0, failedStale: 0 });
+    return NextResponse.json({ checked: 0, updated: 0, failedStale: 0, crawlReset });
   }
 
   const now = Date.now();
@@ -136,7 +159,7 @@ async function run(req: Request) {
   const updated = outcomes.filter((o) => o !== "noop").length;
   const failedStale = outcomes.filter((o) => o === "failed-stale").length;
 
-  return NextResponse.json({ checked: rows.length, updated, failedStale });
+  return NextResponse.json({ checked: rows.length, updated, failedStale, crawlReset });
 }
 
 export async function GET(req: Request) {

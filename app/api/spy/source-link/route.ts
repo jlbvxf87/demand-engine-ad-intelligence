@@ -165,6 +165,13 @@ export async function POST(req: Request) {
 
   const { data: inserted, error: insErr } = await sb.from("spy_ads").insert(row).select("*").single();
   if (insErr || !inserted) {
+    // With the meta_ad_id unique index, a concurrent paste of the same link can
+    // lose the insert race (Postgres 23505). That's not a failure — the ad is in
+    // the library now, so return the existing row instead of erroring.
+    if (insErr?.code === "23505") {
+      const { data: dup } = await sb.from("spy_ads").select("*").eq("meta_ad_id", id).maybeSingle();
+      if (dup) return NextResponse.json({ ad: toAdRow(dup as Record<string, unknown>), existed: true });
+    }
     return NextResponse.json({ error: insErr?.message || "Failed to save ad" }, { status: 500 });
   }
 

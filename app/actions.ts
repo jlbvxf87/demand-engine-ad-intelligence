@@ -9,7 +9,7 @@ import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { buildMasterScript } from "@/lib/storyboard";
 import { persistVideoToStorage } from "@/lib/persist";
 import { BROWSER_UA } from "@/lib/http";
-import { unsafeFetchReason } from "@/lib/ssrf";
+import { unsafeResolvedFetchReason } from "@/lib/ssrf";
 
 function parseJson(raw: string): Record<string, unknown> {
   try {
@@ -324,7 +324,7 @@ export async function recreate(
 export async function decodeUrl(url: string): Promise<ActionResult> {
   const u = (url || "").trim();
   if (!/^https?:\/\//i.test(u)) return { ok: false, error: "Enter a valid http(s) URL" };
-  const bad = unsafeFetchReason(u);
+  const bad = await unsafeResolvedFetchReason(u);
   if (bad) return { ok: false, error: `Can't fetch that URL — ${bad}` };
   try {
     let pageText = "";

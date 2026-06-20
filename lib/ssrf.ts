@@ -1,6 +1,7 @@
 import "server-only";
 
 import { isIP } from "node:net";
+import { lookup } from "node:dns/promises";
 
 /**
  * Returns a human-readable reason if `urlStr` is an unsafe server-side fetch
@@ -50,6 +51,55 @@ export function unsafeFetchReason(urlStr: string): string | null {
   }
   if (ipVersion === 6 && isPrivateIPv6(hostname)) {
     return `private/loopback/link-local IPv6 "${hostname}"`;
+  }
+
+  return null;
+}
+
+/**
+ * Async, DNS-aware version of {@link unsafeFetchReason}. Runs the synchronous
+ * literal-IP/hostname checks first, then — for hostnames that aren't IP literals
+ * — RESOLVES the name and rejects if ANY resolved address is private/loopback/
+ * link-local. This closes the DNS-rebinding hole the sync check can't see: an
+ * attacker-controlled domain (e.g. `evil.example`) that resolves to
+ * `169.254.169.254` or `127.0.0.1` passes every string check but would still
+ * connect to an internal target.
+ *
+ * Note: a determined attacker can still flip the DNS answer between this resolve
+ * and the subsequent fetch (TOCTOU); fully closing that needs connecting to a
+ * pinned IP. This blocks the common metadata/loopback-rebind case with no extra
+ * infra, which is the realistic threat for our outbound page fetches.
+ */
+export async function unsafeResolvedFetchReason(urlStr: string): Promise<string | null> {
+  const sync = unsafeFetchReason(urlStr);
+  if (sync) return sync;
+
+  let hostname: string;
+  try {
+    hostname = new URL(urlStr).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return "invalid URL";
+  }
+
+  // Already an IP literal — the sync check fully covered it.
+  if (isIP(hostname) !== 0) return null;
+
+  let addresses: { address: string; family: number }[];
+  try {
+    addresses = await lookup(hostname, { all: true });
+  } catch {
+    // Can't resolve → let the fetch itself fail (no host to reach = no SSRF).
+    return null;
+  }
+
+  for (const { address } of addresses) {
+    const v = isIP(address);
+    if (v === 4 && isPrivateIPv4(address)) {
+      return `"${hostname}" resolves to private/loopback/link-local IPv4 ${address}`;
+    }
+    if (v === 6 && isPrivateIPv6(address)) {
+      return `"${hostname}" resolves to private/loopback/link-local IPv6 ${address}`;
+    }
   }
 
   return null;

@@ -1,5 +1,10 @@
 import "server-only";
 import { unstable_cache } from "next/cache";
+
+/** Cache tag for the scaled-winners result; revalidate after any write that
+ *  changes which creatives win or whether they have media (search insert,
+ *  creative backfill). Keeps Home/Source fresh instead of waiting out the TTL. */
+export const SCALED_WINNERS_TAG = "scaled-winners";
 import { getServiceClient } from "@/lib/supabase/server";
 import { toDomain } from "@/lib/url";
 import { adHook, isBoilerplate } from "@/lib/ad";
@@ -114,7 +119,14 @@ export async function getWinningCreatives(f: AdFilters = {}): Promise<AdRow[]> {
       .select(AD_COLS)
       .order("winner_score", { ascending: false })
       .range(offset, offset + limit - 1);
-    if (f.vertical && f.vertical !== "all") q = q.eq("vertical", f.vertical);
+    // `vertical` is overloaded (pre-crawl it holds the win-stage badge, post-crawl
+    // the real health vertical). Only filter on it when the value is a REAL
+    // vertical, so a stray badge value ("proven" etc.) can never be used as a
+    // filter and return the wrong slice. (Filter options already come from
+    // getVerticals(), which is known-only — this is belt-and-suspenders.)
+    if (f.vertical && f.vertical !== "all" && KNOWN_VERTICALS.has(f.vertical)) {
+      q = q.eq("vertical", f.vertical);
+    }
     const { data, error } = await q;
     if (error || !data) return [];
     return dedupeByMetaId(data.map(toAdRow));
@@ -220,7 +232,10 @@ const cachedScaledWinners = unstable_cache(
       .from("spy_ads")
       .select(SCALED_GROUP_COLS)
       .order("created_at", { ascending: false })
-      .limit(1500);
+      // Wide enough to cover the whole library (~few thousand ads). The columns
+      // are slim and grouping is in-memory, so this stays cheap; a smaller window
+      // would silently drop older winners from the ranking.
+      .limit(5000);
     if (error || !data) return [];
 
     // Dedupe re-ingested ads (same meta_ad_id) before grouping.
@@ -238,9 +253,13 @@ const cachedScaledWinners = unstable_cache(
     >();
     for (const r of rows) {
       if (isBoilerplate(r.ad_body)) continue; // Meta disclaimer, not a real creative
-      const body = (r.ad_body || "").toLowerCase().replace(/\s+/g, " ").trim();
-      if (body.length < 20) continue;
-      const key = body.slice(0, 140);
+      // Group key: normalize away punctuation/emoji/whitespace differences so the
+      // SAME creative with trivial copy variants still groups together, and use a
+      // longer prefix (300 vs 140) so two genuinely different ads that happen to
+      // share a short opening don't collide into one inflated group.
+      const norm = (r.ad_body || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (norm.length < 20) continue;
+      const key = norm.slice(0, 300);
       const score = r.winner_score ?? 0;
       const days = r.days_running ?? 0;
       const hasCreative = !!r.creative_media_url;
@@ -305,7 +324,10 @@ const cachedScaledWinners = unstable_cache(
     }
   },
   ["scaled-winners"],
-  { revalidate: 300 },
+  // Writes (search insert, creative backfill) purge SCALED_WINNERS_TAG for an
+  // immediate refresh; the 120s TTL is just a safety net that bounds staleness
+  // if a purge is ever missed (was 300s).
+  { revalidate: 120, tags: [SCALED_WINNERS_TAG] },
 );
 
 export async function getScaledWinners(limit = 24): Promise<ScaledWinner[]> {
@@ -329,7 +351,10 @@ const PERSONA_RE = /^(dr\.?\s|doctor\s|prof\.?\s)/i;
 
 /** Advertisers grouped & sorted by active ad count (Source > Advertisers tab). */
 export async function getTopAdvertisers(f: AdFilters = {}): Promise<Advertiser[]> {
-  const ads = await getWinningCreatives({ vertical: f.vertical, limit: 500 });
+  // Scan a wide window of the library (was 500 — which hid every advertiser whose
+  // best ad ranked below the top 500 by winner_score) so the grouping sees the
+  // full set before it rolls up and slices to the requested count.
+  const ads = await getWinningCreatives({ vertical: f.vertical, limit: 1500 });
   const map = new Map<string, Advertiser>();
   for (const a of ads) {
     const name = a.page_name || "Unknown";
@@ -531,26 +556,41 @@ export async function getStoryboards(limit = 8): Promise<Storyboard[]> {
       .limit(limit);
     if (error || !data) return [];
 
-    // For each storyboard, count how many of its scene clips actually rendered a
-    // video (ad_creatives rows with this storyboard_id AND a non-null video_url).
-    // This surfaces silently-dropped scenes when scenesReady < clip_count.
     const rows = data as Omit<Storyboard, "scenesReady">[];
-    return await Promise.all(
-      rows.map(async (s) => {
-        let scenesReady = 0;
-        try {
-          const { count } = await sb
-            .from("ad_creatives")
-            .select("id", { count: "exact", head: true })
-            .eq("storyboard_id", s.id)
-            .not("video_url", "is", null);
-          scenesReady = count ?? 0;
-        } catch {
-          scenesReady = 0;
+    const ids = rows.map((s) => s.id);
+
+    // One query for ALL storyboards' rendered scenes (was an N+1 fan-out of one
+    // COUNT per storyboard). Tally DISTINCT scene_index per storyboard so a
+    // retried scene (an extra ad_creatives row for the same slot) can't inflate
+    // the count, then clamp to clip_count so a re-render never shows >100%.
+    const renderedByStory = new Map<string, Set<number>>();
+    if (ids.length) {
+      try {
+        const { data: scenes } = await sb
+          .from("ad_creatives")
+          .select("storyboard_id, scene_index")
+          .in("storyboard_id", ids)
+          .not("video_url", "is", null);
+        for (const sc of (scenes ?? []) as { storyboard_id: string | null; scene_index: number | null }[]) {
+          if (!sc.storyboard_id) continue;
+          let set = renderedByStory.get(sc.storyboard_id);
+          if (!set) {
+            set = new Set();
+            renderedByStory.set(sc.storyboard_id, set);
+          }
+          // A null scene_index (legacy/unindexed clip) counts as a single slot.
+          set.add(sc.scene_index ?? -1);
         }
-        return { ...s, scenesReady } as Storyboard;
-      })
-    );
+      } catch {
+        /* leave counts at 0 on error */
+      }
+    }
+
+    return rows.map((s) => {
+      const distinct = renderedByStory.get(s.id)?.size ?? 0;
+      const scenesReady = s.clip_count ? Math.min(distinct, s.clip_count) : distinct;
+      return { ...s, scenesReady } as Storyboard;
+    });
   } catch {
     return [];
   }
