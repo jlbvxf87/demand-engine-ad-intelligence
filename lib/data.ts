@@ -637,19 +637,26 @@ export type HomeStats = { winners: number; creatives: number; videos: number; st
 export async function getHomeStats(): Promise<HomeStats> {
   try {
     const sb = getServiceClient();
-    const head = async (table: string, applyFilter?: boolean) => {
-      let q = sb.from(table).select("id", { count: "exact", head: true });
-      if (applyFilter) q = q.not("video_url", "is", null);
-      const { count } = await q;
-      return count ?? 0;
-    };
-    const [winners, creatives, videos, stories] = await Promise.all([
-      head("spy_ads"),
-      head("ad_creatives"),
-      head("ad_creatives", true),
-      head("storyboards"),
+    // "scene" creatives are clips of a Story (counted under STORIES), not loose
+    // assets — so CREATIVES/VIDEOS count STANDALONE creatives only, matching the
+    // Create grid. A null creative_type is treated as standalone.
+    const notScene = "creative_type.is.null,creative_type.neq.scene";
+    const [ads, creatives, videos, stories] = await Promise.all([
+      sb.from("spy_ads").select("id", { count: "exact", head: true }),
+      sb.from("ad_creatives").select("id", { count: "exact", head: true }).or(notScene),
+      sb
+        .from("ad_creatives")
+        .select("id", { count: "exact", head: true })
+        .or(notScene)
+        .not("video_url", "is", null),
+      sb.from("storyboards").select("id", { count: "exact", head: true }),
     ]);
-    return { winners, creatives, videos, stories };
+    return {
+      winners: ads.count ?? 0,
+      creatives: creatives.count ?? 0,
+      videos: videos.count ?? 0,
+      stories: stories.count ?? 0,
+    };
   } catch {
     return { winners: 0, creatives: 0, videos: 0, stories: 0 };
   }

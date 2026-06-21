@@ -67,7 +67,8 @@ export default async function HomePage() {
       return true;
     })
     .slice(0, 6);
-  const videos = creatives.filter((c) => c.video_url).slice(0, 6);
+  // Standalone videos only — scene clips belong to a Story, not the latest-videos tray.
+  const videos = creatives.filter((c) => c.video_url && c.creative_type !== "scene").slice(0, 6);
 
   const tiles = [
     // This is the TOTAL ad library (every ad pulled), not literally "winners" —

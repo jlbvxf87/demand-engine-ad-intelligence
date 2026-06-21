@@ -83,6 +83,10 @@ export default function PublishClient({
 
   const anyRendering = creatives.some(isRendering);
   const stills = creatives.filter((c) => !c.video_url && !isRendering(c));
+  // Scene clips belong to a Story (rendered + stitched in the Stories section
+  // above), so keep them out of the standalone reel grid — otherwise the same
+  // footage shows twice. The render/poll logic above still tracks ALL creatives.
+  const standalone = creatives.filter((c) => c.creative_type !== "scene");
   const anyStoryboardActive = storyboards.some((s) =>
     ["scripting", "generating", "stitching"].includes(s.status)
   );
@@ -267,7 +271,7 @@ export default function PublishClient({
       )}
 
       {/* Reel grid */}
-      {creatives.length === 0 ? (
+      {standalone.length === 0 ? (
         <EmptyState
           icon={Play}
           title="Nothing to publish yet"
@@ -275,7 +279,7 @@ export default function PublishClient({
         />
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {creatives.map((c) => (
+          {standalone.map((c) => (
             <ReelTile key={c.id} c={c} onClick={() => setReview(c)} />
           ))}
         </div>
@@ -359,11 +363,11 @@ export default function PublishClient({
       </Card>
 
       <button
-        disabled={creatives.length === 0}
+        disabled={standalone.length === 0}
         className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-[16px] font-bold text-white disabled:opacity-40 active:scale-[0.99]"
         style={{ background: ACCENT }}
       >
-        <Play size={18} /> Publish {creatives.length || ""} Creatives
+        <Play size={18} /> Publish {standalone.length || ""} Creatives
       </button>
 
       {/* ── Creative review ─────────────────────────────────────────────── */}
