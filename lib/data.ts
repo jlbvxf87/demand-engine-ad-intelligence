@@ -201,16 +201,19 @@ export async function getWinnerExemplars(brief: string, limit = 6): Promise<stri
       return words.reduce((n, w) => n + (h.includes(w) ? 1 : 0), 0);
     };
 
-    // Real winning ad copy (highest winner_score), de-boilerplated.
+    // Real winning ad copy, de-boilerplated. Ranked by VOLUME (brand_ad_count) —
+    // the true winner signal here, since Meta only reports spend/winner_score for
+    // political ads (≈0 for commercial). Pull a wide slice of the highest-volume
+    // advertisers, then rank by brief relevance.
     const { data: ads } = await sb
       .from("spy_ads")
-      .select("ad_body, winner_score")
-      .order("winner_score", { ascending: false })
-      .limit(80);
-    const topAds = ((ads || []) as { ad_body: string | null; winner_score: number | null }[])
+      .select("ad_body, brand_ad_count")
+      .order("brand_ad_count", { ascending: false })
+      .limit(150);
+    const topAds = ((ads || []) as { ad_body: string | null; brand_ad_count: number | null }[])
       .filter((a) => a.ad_body && !isBoilerplate(a.ad_body))
       .map((a) => ({ a, s: rel(a.ad_body) }))
-      .sort((x, y) => y.s - x.s || (y.a.winner_score || 0) - (x.a.winner_score || 0))
+      .sort((x, y) => y.s - x.s || (y.a.brand_ad_count || 0) - (x.a.brand_ad_count || 0))
       .slice(0, limit)
       .map((x) => x.a);
 
@@ -230,9 +233,15 @@ export async function getWinnerExemplars(brief: string, limit = 6): Promise<stri
     const parts: string[] = [];
     if (topAds.length) {
       parts.push(
-        "PROVEN WINNING AD COPY (real ads running at scale in our library):\n" +
+        "PROVEN WINNING AD COPY (advertisers running these at scale):\n" +
           topAds
-            .map((a, i) => `${i + 1}. ${(a.ad_body || "").replace(/\s+/g, " ").trim().slice(0, 300)}`)
+            .map(
+              (a, i) =>
+                `${i + 1}. [${a.brand_ad_count ?? 1}× ads] ${(a.ad_body || "")
+                  .replace(/\s+/g, " ")
+                  .trim()
+                  .slice(0, 300)}`,
+            )
             .join("\n"),
       );
     }
