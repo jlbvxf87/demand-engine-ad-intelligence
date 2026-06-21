@@ -51,11 +51,16 @@ export async function buildMasterScript(
   prompt: string,
   provider: VideoProvider,
   clipCount: number,
-  durationPerClip: number
+  durationPerClip: number,
+  exemplars = ""
 ): Promise<MasterScene[]> {
   const maxChars = MAX_CHARS[provider] ?? 2500;
   const user = `BRIEF: ${prompt}
-
+${
+  exemplars
+    ? `\nSTUDY THESE PROVEN WINNERS from our ad library and model your script on their hook style, emotional triggers, pacing, and structure — ADAPT them to the brief; do NOT copy verbatim. The goal is output that matches or beats these:\n${exemplars}\n`
+    : ""
+}
 Write a master script of EXACTLY ${clipCount} scenes, one per clip, following this arc: ${arcFor(clipCount)}.
 Each scene is ~${durationPerClip}s. Each scene_prompt must be a complete standalone prompt, max ${maxChars} characters.
 

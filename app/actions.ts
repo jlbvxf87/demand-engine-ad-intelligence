@@ -3,7 +3,12 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { getServiceClient } from "@/lib/supabase/server";
-import { getWinningCreatives, searchLibrary as searchLibraryData, type AdRow } from "@/lib/data";
+import {
+  getWinningCreatives,
+  searchLibrary as searchLibraryData,
+  getWinnerExemplars,
+  type AdRow,
+} from "@/lib/data";
 import Anthropic from "@anthropic-ai/sdk";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { buildMasterScript } from "@/lib/storyboard";
@@ -383,17 +388,23 @@ export async function generateFromBrief(input: {
       const { data } = await sb.from("brands").select("brand_voice").eq("slug", input.brandSlug).single();
       voice = (data as { brand_voice?: string } | null)?.brand_voice || "";
     }
+    // Ground the copy in proven winners from the library.
+    const exemplars = await getWinnerExemplars(brief);
     const anthropic = new Anthropic();
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 2000,
       system:
-        "You are a direct-response copywriter. Return JSON only. No banned CTAs (Get Started/Sign Up/Learn More), no therapeutic or guaranteed-outcome claims.",
+        "You are a direct-response copywriter. Return JSON only. No banned CTAs (Get Started/Sign Up/Learn More), no therapeutic or guaranteed-outcome claims. If proven winning examples are provided, emulate their hook style and emotional triggers while staying original.",
       messages: [
         {
           role: "user",
           content: `From this brief, write ${variants} original ad hook variations.${
             voice ? ` Brand voice: ${voice}.` : ""
+          }${
+            exemplars
+              ? `\n\nMODEL THESE PROVEN WINNERS from our library — match their hook style and triggers, adapt to the brief, do NOT copy verbatim:\n${exemplars}`
+              : ""
           }\nBRIEF: ${brief}\nReturn JSON: {"hooks":[{"hook":"5-10 words","bridge":"one connecting sentence","cta":"3-5 words, outcome-framed"}]}`,
         },
       ],
@@ -653,7 +664,9 @@ export async function createStoryboard(input: {
 
   try {
     const sb = getServiceClient();
-    const scenes = await buildMasterScript(prompt, provider, clipCount, durationPerClip);
+    // Ground the script in proven winners from the library so output matches/beats them.
+    const exemplars = await getWinnerExemplars(prompt);
+    const scenes = await buildMasterScript(prompt, provider, clipCount, durationPerClip, exemplars);
 
     const { data: story, error: sErr } = await sb
       .from("storyboards")

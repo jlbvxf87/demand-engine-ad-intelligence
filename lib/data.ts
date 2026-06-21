@@ -175,6 +175,86 @@ export async function searchLibrary(query: string, limit = 100): Promise<AdRow[]
   }
 }
 
+// Common words that shouldn't drive relevance matching against the brief.
+const EXEMPLAR_STOP = new Set(
+  "the and for with this that your you our are was were from into make made want need help best more their them they will video scene story brief style".split(
+    /\s+/,
+  ),
+);
+
+/**
+ * Sweep the library for PROVEN winning material to ground generation: real
+ * high-scoring ad copy + decoded hook patterns, ranked by relevance to the
+ * brief. Returns compact reference text (or "" if the library is empty) that the
+ * script / copy prompts study so output matches or beats what's already working.
+ */
+export async function getWinnerExemplars(brief: string, limit = 6): Promise<string> {
+  try {
+    const sb = getServiceClient();
+    const words = Array.from(
+      new Set(
+        (String(brief).toLowerCase().match(/[a-z0-9]{4,}/g) || []).filter((w) => !EXEMPLAR_STOP.has(w)),
+      ),
+    ).slice(0, 10);
+    const rel = (text: string | null | undefined) => {
+      const h = (text || "").toLowerCase();
+      return words.reduce((n, w) => n + (h.includes(w) ? 1 : 0), 0);
+    };
+
+    // Real winning ad copy (highest winner_score), de-boilerplated.
+    const { data: ads } = await sb
+      .from("spy_ads")
+      .select("ad_body, winner_score")
+      .order("winner_score", { ascending: false })
+      .limit(80);
+    const topAds = ((ads || []) as { ad_body: string | null; winner_score: number | null }[])
+      .filter((a) => a.ad_body && !isBoilerplate(a.ad_body))
+      .map((a) => ({ a, s: rel(a.ad_body) }))
+      .sort((x, y) => y.s - x.s || (y.a.winner_score || 0) - (x.a.winner_score || 0))
+      .slice(0, limit)
+      .map((x) => x.a);
+
+    // Decoded hook patterns — the extracted "why it works" from real winners.
+    const { data: pats } = await sb
+      .from("ad_hook_patterns")
+      .select("hook_sentence, hook_type, emotional_trigger, why_it_works, winner_score")
+      .order("winner_score", { ascending: false })
+      .limit(40);
+    const topPats = ((pats || []) as Record<string, unknown>[])
+      .map((p) => ({ p, s: rel(`${p.hook_sentence} ${p.emotional_trigger} ${p.why_it_works}`) }))
+      .sort((x, y) => y.s - x.s || (Number(y.p.winner_score) || 0) - (Number(x.p.winner_score) || 0))
+      .slice(0, 4)
+      .map((x) => x.p)
+      .filter((p) => p.hook_sentence || p.why_it_works);
+
+    const parts: string[] = [];
+    if (topAds.length) {
+      parts.push(
+        "PROVEN WINNING AD COPY (real ads running at scale in our library):\n" +
+          topAds
+            .map((a, i) => `${i + 1}. ${(a.ad_body || "").replace(/\s+/g, " ").trim().slice(0, 300)}`)
+            .join("\n"),
+      );
+    }
+    if (topPats.length) {
+      parts.push(
+        "DECODED WINNING HOOKS (why they convert):\n" +
+          topPats
+            .map(
+              (p, i) =>
+                `${i + 1}. Hook: "${String(p.hook_sentence || "").slice(0, 160)}" — type ${
+                  p.hook_type || "?"
+                }; trigger: ${p.emotional_trigger || "?"}; why: ${String(p.why_it_works || "").slice(0, 160)}`,
+            )
+            .join("\n"),
+      );
+    }
+    return parts.join("\n\n");
+  } catch {
+    return "";
+  }
+}
+
 export type ScaledWinner = {
   key: string;
   ad: AdRow; // representative ad (for the detail viewer + scrape)
