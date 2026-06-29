@@ -41,6 +41,20 @@ function isRendering(c: Creative) {
   );
 }
 
+/** Cinematic = a real AI-model (KIE) video. Tests = cheap Remotion drafts/motion,
+ *  stills, and anything not yet promoted to a paid model render. */
+function isCinematic(c: Creative) {
+  return !!c.video_provider && c.video_provider !== "remotion";
+}
+
+/** Short tier label for a tile badge. */
+function tierLabel(c: Creative): string {
+  if (c.render_mode === "motion") return "Motion";
+  if (c.render_mode === "draft" || c.video_provider === "remotion") return "Draft";
+  if (c.video_provider) return providerLabel(c.video_provider);
+  return c.video_url ? "Video" : "Still";
+}
+
 function fmtElapsed(secs: number) {
   return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
 }
@@ -83,12 +97,16 @@ export default function PublishClient({
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [outFilter, setOutFilter] = useState<"all" | "tests" | "cinematic">("all");
 
   const anyRendering = creatives.some(isRendering);
   const stills = creatives.filter((c) => !c.video_url && !isRendering(c));
   // Scene clips belong to a Story (shown in the Stories tab), so keep them out of
   // the standalone reel grid — otherwise the same footage shows twice.
   const standalone = creatives.filter((c) => c.creative_type !== "scene");
+  const cinematic = standalone.filter(isCinematic);
+  const tests = standalone.filter((c) => !isCinematic(c));
+  const shown = outFilter === "tests" ? tests : outFilter === "cinematic" ? cinematic : standalone;
   const anyStoryboardActive = storyboards.some((s) =>
     ["scripting", "generating", "stitching"].includes(s.status)
   );
@@ -191,7 +209,42 @@ export default function PublishClient({
 
       {/* ── Outputs (persistent across tabs) ───────────────────────────────── */}
       <div className="mt-6 border-t border-[var(--color-line)] pt-5">
-        <p className="mb-2 text-[15px] font-bold">Outputs</p>
+        <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[15px] font-bold">Outputs</p>
+          {standalone.length > 0 && (
+            <div className="inline-flex items-center gap-1 rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] p-0.5">
+              {([
+                ["all", "All", standalone.length],
+                ["tests", "Tests", tests.length],
+                ["cinematic", "Cinematic", cinematic.length],
+              ] as const).map(([id, label, count]) => {
+                const on = outFilter === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setOutFilter(id)}
+                    className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] font-bold transition-colors"
+                    style={{
+                      background: on ? ACCENT : "transparent",
+                      color: on ? "#fff" : "var(--color-ink-muted)",
+                    }}
+                  >
+                    {label}
+                    <span
+                      className="rounded-full px-1.5 text-[10.5px] font-extrabold tabular-nums"
+                      style={{
+                        background: on ? "rgba(255,255,255,0.25)" : "var(--color-surface-2)",
+                        color: on ? "#fff" : "var(--color-ink-muted)",
+                      }}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Model picker + render-all stills (KIE batch) */}
         {stills.length > 0 && (
@@ -223,16 +276,26 @@ export default function PublishClient({
           </div>
         )}
 
-        {/* Reel grid */}
+        {/* Reel grid (filtered by tier) */}
         {standalone.length === 0 ? (
           <EmptyState
             icon={Play}
             title="Nothing here yet"
             hint="Generate copy or a draft above — your outputs queue here."
           />
+        ) : shown.length === 0 ? (
+          <EmptyState
+            icon={Play}
+            title={outFilter === "cinematic" ? "No cinematic finals yet" : "No tests yet"}
+            hint={
+              outFilter === "cinematic"
+                ? "Upgrade a winning draft to Cinematic and it lands here."
+                : "Generate a Draft or Motion above — your cheap tests queue here."
+            }
+          />
         ) : (
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {standalone.map((c) => (
+            {shown.map((c) => (
               <ReelTile key={c.id} c={c} onClick={() => setReview(c)} />
             ))}
           </div>
@@ -432,10 +495,12 @@ function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
       <div className="pointer-events-none absolute inset-x-2 top-2 flex items-start justify-between gap-1">
         <span
           className="rounded px-1.5 py-0.5 text-[9px] font-bold"
-          style={{ background: "rgba(0,0,0,0.55)", color: "#fff" }}
+          style={{
+            background: isCinematic(c) ? "rgba(23,46,215,0.85)" : "rgba(0,0,0,0.55)",
+            color: "#fff",
+          }}
         >
-          {(c.video_provider && providerLabel(c.video_provider)) ||
-            (c.video_url ? "Video" : "Still")}
+          {tierLabel(c)}
         </span>
         {rendering && (
           <span className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold tabular-nums" style={{ background: "rgba(23,46,215,0.85)", color: "#fff" }}>
