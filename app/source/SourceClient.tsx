@@ -2,13 +2,12 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Search, ArrowRight, ExternalLink, Loader2, CornerDownRight } from "lucide-react";
+import { Search, ArrowRight, ExternalLink, Loader2, CornerDownRight, Download, SlidersHorizontal } from "lucide-react";
 import {
   ScreenHeader,
   Card,
   Badge,
   WinnerBadge,
-  Tabs,
   EmptyState,
   Modal,
   Stat,
@@ -218,6 +217,52 @@ function fmtSearchDate(iso: string): string {
   );
 }
 
+const SEARCH_BUCKETS = ["Today", "Yesterday", "Earlier this week", "Earlier"] as const;
+type SearchBucket = (typeof SEARCH_BUCKETS)[number];
+
+/** Which day-group a search falls into, relative to now (local time). */
+function dateBucket(iso: string): SearchBucket {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Earlier";
+  const now = new Date();
+  const day0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const d0 = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((day0 - d0) / 86400000);
+  if (diff <= 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  if (diff <= 6) return "Earlier this week";
+  return "Earlier";
+}
+
+/** One past-search row in the Searches view. */
+function SearchRow({ s, onOpen }: { s: SearchBatch; onOpen: () => void }) {
+  return (
+    <button
+      onClick={onOpen}
+      className="flex items-center justify-between gap-3 rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-3 text-left shadow-[0_1px_2px_rgba(16,21,27,0.03)] transition-all duration-150 hover:-translate-y-0.5"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
+          <Search size={17} />
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[14px] font-bold">{s.keyword}</p>
+          <p className="text-[11.5px] text-[var(--color-ink-muted)]">{fmtSearchDate(s.created_at)}</p>
+        </div>
+      </div>
+      <span className="flex shrink-0 items-center gap-2">
+        <span
+          className="rounded-lg bg-[var(--color-accent-soft)] px-2.5 py-1 text-[12px] font-bold tabular-nums"
+          style={{ color: ACCENT }}
+        >
+          {compact(s.ad_count)} ads
+        </span>
+        <ArrowRight size={16} className="text-[var(--color-ink-muted)]" />
+      </span>
+    </button>
+  );
+}
+
 export default function SourceClient({
   advertisers,
   creatives,
@@ -236,7 +281,12 @@ export default function SourceClient({
   searches: SearchBatch[];
 }) {
   const router = useRouter();
-  const [tab, setTab] = useState("scaled");
+  const [tab, setTab] = useState("creatives"); // default = the flat ad list
+  const [sort, setSort] = useState<"recent" | "top">("recent");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [searchFilter, setSearchFilter] = useState(""); // filter the Searches view
+  const [searchFocused, setSearchFocused] = useState(false); // unified box: show recent searches
   const [vertical, setVertical] = useState<string>("all");
   const [query, setQuery] = useState("");
   const [country, setCountry] = useState("US");
@@ -401,6 +451,39 @@ export default function SourceClient({
     () => (libResults !== null ? libResults : allCreatives).filter((a) => vFilter(a.vertical) && indOk(a)),
     [libResults, allCreatives, vertical, independentOnly],
   );
+  // Recent-first by default (lowest days_running = most recently launched);
+  // "Top winners" keeps the winner-score order.
+  const crvSorted = useMemo(() => {
+    const arr = [...crv];
+    arr.sort((a, b) => (sort === "recent" ? a.days_running - b.days_running : b.winner_score - a.winner_score));
+    return arr;
+  }, [crv, sort]);
+  const activeFilterCount = [
+    country !== "US",
+    status !== "ACTIVE",
+    media !== "ALL",
+    windowDays !== 0,
+    platform !== "",
+    vertical !== "all",
+  ].filter(Boolean).length;
+
+  // Unified search box: past searches matching what you're typing (or the most
+  // recent ones when the box is empty) — instant, from already-loaded data.
+  const matchedSearches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = q ? searches.filter((s) => s.keyword.toLowerCase().includes(q)) : searches;
+    return list.slice(0, 6);
+  }, [searches, query]);
+
+  // Searches view: filter by keyword, then bucket newest-first by day.
+  const searchGroups = useMemo(() => {
+    const q = searchFilter.trim().toLowerCase();
+    const filtered = q ? searches.filter((s) => s.keyword.toLowerCase().includes(q)) : searches;
+    const byBucket = new Map<SearchBucket, SearchBatch[]>(SEARCH_BUCKETS.map((b) => [b, []]));
+    for (const s of filtered) byBucket.get(dateBucket(s.created_at))!.push(s);
+    const groups = SEARCH_BUCKETS.map((b) => ({ label: b, items: byBucket.get(b)! })).filter((g) => g.items.length > 0);
+    return { count: filtered.length, groups };
+  }, [searches, searchFilter]);
   const scaledF = useMemo(
     () => scaled.filter((w) => indOk(w.ad)),
     [scaled, independentOnly],
@@ -529,14 +612,16 @@ export default function SourceClient({
         badgeTone="source"
       />
 
-      {/* Primary: search the ads you've ALREADY saved (your library) */}
+      {/* One clean box: finds ads AND surfaces your past searches as you type */}
       <div className="mb-2 flex items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-3">
         <Search size={18} className="text-[var(--color-ink-muted)]" />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && findInLibrary(query)}
-          placeholder={`Search your ${creativesTotal.toLocaleString()} saved ads — brand, copy, domain, hook…`}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => setSearchFocused(false)}
+          placeholder="Search ads or your past searches — brand, copy, domain, hook…"
           className="w-full bg-transparent text-[15px] outline-none placeholder:text-[var(--color-ink-muted)]"
         />
         {libResults !== null && (
@@ -553,151 +638,185 @@ export default function SourceClient({
           {libSearching ? <Loader2 size={14} className="animate-spin" /> : "Search"}
         </button>
       </div>
-      {/* Secondary: pull NEW ads from the live Meta Ad Library */}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 px-1">
-        <span className="text-[11.5px] text-[var(--color-ink-muted)]">
-          Searches your {creativesTotal.toLocaleString()} saved ads. Need fresh ones?
-        </span>
-        <button
-          onClick={runSearch}
-          disabled={pending || !query.trim()}
-          className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40"
-        >
-          {pending ? <Loader2 size={13} className="animate-spin" /> : (
-            <>
-              <ExternalLink size={13} /> Pull new from Meta
-            </>
-          )}
-        </button>
-      </div>
 
-      {/* Source ONE ad straight from a Meta Ad Library link */}
-      <div className="mb-4 flex items-center gap-2 rounded-2xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-2.5">
-        <ExternalLink size={16} className="shrink-0 text-[var(--color-ink-muted)]" />
-        <input
-          value={linkInput}
-          onChange={(e) => setLinkInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && sourceLink()}
-          placeholder="Or paste a Meta ad-library link (…/ads/library/?id=…)"
-          className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-[var(--color-ink-muted)]"
+      {/* Live: your past searches matching what you're typing — tap to reopen */}
+      {(searchFocused || query.trim()) && matchedSearches.length > 0 && (
+        <div className="mb-3 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-1.5 shadow-[0_8px_24px_-12px_rgba(16,21,27,0.18)]">
+          <p className="px-2 py-1 text-[10.5px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
+            {query.trim() ? `Your searches matching "${query.trim()}"` : "Jump back to a recent search"}
+          </p>
+          {matchedSearches.map((s) => (
+            <button
+              key={s.id}
+              // onMouseDown so it fires before the input's onBlur hides this panel.
+              onMouseDown={() => {
+                setTab("searches");
+                openSearch(s);
+              }}
+              className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left hover:bg-[var(--color-surface-2)]"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <CornerDownRight size={14} className="shrink-0 text-[var(--color-ink-muted)]" />
+                <span className="truncate text-[13.5px] font-semibold">{s.keyword}</span>
+              </span>
+              <span className="shrink-0 text-[11px] font-semibold text-[var(--color-ink-muted)]">
+                {dateBucket(s.created_at)} · {compact(s.ad_count)} ads
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {/* Toolbar — sort · filters · view · pull-from-Meta · link */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <FilterSelect
+          label="Sort"
+          value={sort}
+          onChange={(v) => setSort(v as "recent" | "top")}
+          options={[
+            { value: "recent", label: "Most recent" },
+            { value: "top", label: "Top winners" },
+          ]}
         />
         <button
-          onClick={sourceLink}
-          disabled={sourcing || !linkInput.trim()}
-          className="flex shrink-0 items-center gap-1 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40"
+          onClick={() => setFiltersOpen((v) => !v)}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 py-1.5 text-[12.5px] font-bold"
+          style={
+            filtersOpen || activeFilterCount > 0
+              ? { borderColor: ACCENT, color: ACCENT }
+              : { borderColor: "var(--color-line)", color: "var(--color-ink-muted)" }
+          }
         >
-          {sourcing ? <Loader2 size={13} className="animate-spin" /> : "Source ad"}
+          <SlidersHorizontal size={13} /> Filters{activeFilterCount > 0 ? ` · ${activeFilterCount}` : ""}
         </button>
+        <FilterSelect
+          label="View"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: "creatives", label: "Ads" },
+            { value: "advertisers", label: "Brands" },
+            { value: "searches", label: "Searches" },
+          ]}
+        />
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={runSearch}
+            disabled={pending || !query.trim()}
+            title={query.trim() ? `Pull "${query.trim()}" fresh from the Meta Ad Library` : "Type a search term first"}
+            className="inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[12.5px] font-bold text-white disabled:opacity-40"
+            style={{ background: ACCENT }}
+          >
+            {pending ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+            Pull from Meta
+          </button>
+          <button
+            onClick={() => setLinkOpen((v) => !v)}
+            title="Source one ad from a Meta link"
+            className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-[var(--color-line)] px-2.5 py-1.5 text-[12.5px] font-bold text-[var(--color-ink-muted)]"
+          >
+            <ExternalLink size={13} /> Link
+          </button>
+        </div>
       </div>
+
+      {/* Filters (collapsible) */}
+      {filtersOpen && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-3">
+          <button
+            onClick={() => setIndependentOnly((v) => !v)}
+            title="Hide market leaders and advocacy/issue ads — show only independent operators"
+            className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-pill)] border px-3 py-1.5 text-[12.5px] font-bold"
+            style={
+              independentOnly
+                ? { background: ACCENT, color: "white", borderColor: ACCENT }
+                : { borderColor: "var(--color-line)", color: "var(--color-ink-muted)" }
+            }
+          >
+            {independentOnly ? "✓ Independent only" : "Independent only"}
+          </button>
+          <FilterSelect label="Country" value={country} onChange={setCountry} options={COUNTRIES} />
+          <FilterSelect
+            label="Status"
+            value={status}
+            onChange={(v) => setStatus(v as "ACTIVE" | "ALL" | "INACTIVE")}
+            options={[
+              { value: "ACTIVE", label: "Active" },
+              { value: "ALL", label: "All" },
+              { value: "INACTIVE", label: "Inactive" },
+            ]}
+          />
+          <FilterSelect
+            label="Media"
+            value={media}
+            onChange={(v) => setMedia(v as "ALL" | "VIDEO" | "IMAGE")}
+            options={[
+              { value: "ALL", label: "All" },
+              { value: "VIDEO", label: "Video" },
+              { value: "IMAGE", label: "Image" },
+            ]}
+          />
+          <FilterSelect
+            label="Window"
+            value={String(windowDays)}
+            onChange={(v) => setWindowDays(Number(v))}
+            options={[
+              { value: "0", label: "Any time" },
+              { value: "7", label: "7 days" },
+              { value: "30", label: "30 days" },
+              { value: "90", label: "90 days" },
+            ]}
+          />
+          <FilterSelect
+            label="Platform"
+            value={platform}
+            onChange={setPlatform}
+            options={[
+              { value: "", label: "All" },
+              { value: "facebook", label: "Facebook" },
+              { value: "instagram", label: "Instagram" },
+            ]}
+          />
+          <FilterSelect
+            label="Vertical"
+            value={vertical}
+            onChange={setVertical}
+            options={[
+              { value: "all", label: "All" },
+              ...verticals.map((v) => ({ value: v, label: verticalLabel(v) })),
+            ]}
+          />
+          <span className="w-full px-1 text-[11px] text-[var(--color-ink-muted)]">
+            Country / Status / Media / Window apply when you Pull from Meta.
+          </span>
+        </div>
+      )}
+
+      {/* Source one ad from a Meta link (collapsible) */}
+      {linkOpen && (
+        <div className="mb-3 flex items-center gap-2 rounded-2xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-2.5">
+          <ExternalLink size={16} className="shrink-0 text-[var(--color-ink-muted)]" />
+          <input
+            value={linkInput}
+            onChange={(e) => setLinkInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && sourceLink()}
+            placeholder="Paste a Meta ad-library link (…/ads/library/?id=…)"
+            className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-[var(--color-ink-muted)]"
+          />
+          <button
+            onClick={sourceLink}
+            disabled={sourcing || !linkInput.trim()}
+            className="flex shrink-0 items-center gap-1 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-40"
+          >
+            {sourcing ? <Loader2 size={13} className="animate-spin" /> : "Source ad"}
+          </button>
+        </div>
+      )}
+
       {note && (
         <p className="mb-3 rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">
           {note}
         </p>
       )}
-
-      {/* Advanced filters — drive the Meta search */}
-      <div className="no-scrollbar mb-2 flex gap-2 overflow-x-auto pb-1">
-        <button
-          onClick={() => setIndependentOnly((v) => !v)}
-          title="Hide market leaders (Pfizer, Hims…) and advocacy/issue ads — show only independent operators"
-          className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-pill)] border px-3 py-1.5 text-[12.5px] font-bold"
-          style={
-            independentOnly
-              ? { background: ACCENT, color: "white", borderColor: ACCENT }
-              : { borderColor: "var(--color-line)", color: "var(--color-ink-muted)" }
-          }
-        >
-          {independentOnly ? "✓ Independent only" : "Independent only"}
-        </button>
-        <FilterSelect label="Country" value={country} onChange={setCountry} options={COUNTRIES} />
-        <FilterSelect
-          label="Status"
-          value={status}
-          onChange={(v) => setStatus(v as "ACTIVE" | "ALL" | "INACTIVE")}
-          options={[
-            { value: "ACTIVE", label: "Active" },
-            { value: "ALL", label: "All" },
-            { value: "INACTIVE", label: "Inactive" },
-          ]}
-        />
-        <FilterSelect
-          label="Media"
-          value={media}
-          onChange={(v) => setMedia(v as "ALL" | "VIDEO" | "IMAGE")}
-          options={[
-            { value: "ALL", label: "All" },
-            { value: "VIDEO", label: "Video" },
-            { value: "IMAGE", label: "Image" },
-          ]}
-        />
-        <FilterSelect
-          label="Window"
-          value={String(windowDays)}
-          onChange={(v) => setWindowDays(Number(v))}
-          options={[
-            { value: "0", label: "Any time" },
-            { value: "7", label: "7 days" },
-            { value: "30", label: "30 days" },
-            { value: "90", label: "90 days" },
-          ]}
-        />
-        <FilterSelect
-          label="Platform"
-          value={platform}
-          onChange={setPlatform}
-          options={[
-            { value: "", label: "All" },
-            { value: "facebook", label: "Facebook" },
-            { value: "instagram", label: "Instagram" },
-          ]}
-        />
-        <FilterSelect
-          label="Vertical"
-          value={vertical}
-          onChange={setVertical}
-          options={[
-            { value: "all", label: "All" },
-            ...verticals.map((v) => ({ value: v, label: verticalLabel(v) })),
-          ]}
-        />
-      </div>
-      <p className="mb-4 px-1 text-[11px] text-[var(--color-ink-muted)]">
-        Country / Status / Media / Window apply to “Pull new from Meta.” Vertical filters what’s shown.
-      </p>
-
-      {/* Tabs */}
-      <div className="mb-4">
-        <Tabs
-          accent={ACCENT}
-          active={tab}
-          onChange={setTab}
-          tabs={[
-            { id: "scaled", label: `Proven${scaledF.length ? ` · ${scaledF.length}` : ""}` },
-            { id: "advertisers", label: `Brands${adv.length ? ` · ${adv.length}` : ""}` },
-            { id: "creatives", label: `All ads${crv.length ? ` · ${crv.length}` : ""}` },
-            { id: "searches", label: `Searches${searches.length ? ` · ${searches.length}` : ""}` },
-            { id: "identity", label: `Personas${identity.length ? ` · ${identity.length}` : ""}` },
-          ]}
-        />
-      </div>
-      {/* Always-visible explainer for the active tab */}
-      <p className="mb-3 px-1 text-[12px] text-[var(--color-ink-muted)]">
-        {tab === "scaled" && (
-          <><b className="text-[var(--color-ink)]">Proven</b> — the same creative an advertiser runs over and over (across many ads, links, or pages). Repetition = it’s working.</>
-        )}
-        {tab === "advertisers" && (
-          <><b className="text-[var(--color-ink)]">Brands</b> — each advertiser, ranked by how many ads they’re running. Tap to pull their full ad library.</>
-        )}
-        {tab === "creatives" && (
-          <><b className="text-[var(--color-ink)]">All ads</b> — every individual ad you’ve pulled, highest winner score first.</>
-        )}
-        {tab === "searches" && (
-          <><b className="text-[var(--color-ink)]">Searches</b> — each search you’ve run, newest first. Tap one to see only the ads it pulled in — isolated from the rest of your library.</>
-        )}
-        {tab === "identity" && (
-          <><b className="text-[var(--color-ink)]">Personas</b> — “Dr. ABC”-style advertisers resolved up to the real brand behind them.</>
-        )}
-      </p>
 
       {/* ── Scaled winners (duplication = proven) ───────────────────────── */}
       {tab === "scaled" &&
@@ -834,15 +953,34 @@ export default function SourceClient({
       {tab === "creatives" && (
         <div className="flex flex-col gap-3">
           {crv.length === 0 ? (
-            <EmptyState
-              icon={Search}
-              title={libResults !== null ? "No matches in your library" : "No creatives yet"}
-              hint={
-                libResults !== null
-                  ? `Nothing saved matches “${libQuery}”. Clear to browse all, or use the Meta search up top to pull new ads.`
-                  : "Run a search to populate winners."
-              }
-            />
+            libResults !== null ? (
+              // Seamless: no saved match → one tap pulls this term live from Meta.
+              <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-[var(--color-line)] bg-[var(--color-surface)] px-6 py-12 text-center">
+                <Search size={24} className="text-[var(--color-ink-muted)]" />
+                <p className="text-[15px] font-bold">No saved ads match “{libQuery}”.</p>
+                <p className="max-w-sm text-[12.5px] text-[var(--color-ink-muted)]">
+                  Pull fresh ads for this term straight from the Meta Ad Library.
+                </p>
+                <button
+                  onClick={runSearch}
+                  disabled={pending}
+                  className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-[14px] font-bold text-white disabled:opacity-60"
+                  style={{ background: ACCENT }}
+                >
+                  {pending ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
+                  Pull “{libQuery}” from Meta
+                </button>
+                <button onClick={clearLibSearch} className="text-[12px] font-semibold text-[var(--color-ink-muted)]">
+                  or clear and browse all
+                </button>
+              </div>
+            ) : (
+              <EmptyState
+                icon={Search}
+                title="No ads yet"
+                hint="Search above, or Pull from Meta to populate your library."
+              />
+            )
           ) : (
             <>
               <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
@@ -854,7 +992,7 @@ export default function SourceClient({
                         : ""
                     } Tick a box to select, then recreate.`}
               </p>
-              {crv.map((c) => (
+              {crvSorted.map((c) => (
                 <AdRowCard
                   key={c.id}
                   c={c}
@@ -975,33 +1113,41 @@ export default function SourceClient({
             hint="Use “Pull new from Meta” above — every search you run is saved here as its own batch."
           />
         ) : (
-          <div className="flex flex-col gap-2.5">
-            {searches.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => openSearch(s)}
-                className="flex items-center justify-between gap-3 rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-3 text-left shadow-[0_1px_2px_rgba(16,21,27,0.03)] transition-all duration-150 hover:-translate-y-0.5"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[var(--color-accent-soft)] text-[var(--color-accent)]">
-                    <Search size={17} />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-[14px] font-bold">{s.keyword}</p>
-                    <p className="text-[11.5px] text-[var(--color-ink-muted)]">{fmtSearchDate(s.created_at)}</p>
+          <div className="flex flex-col gap-4">
+            {/* Filter past searches by keyword */}
+            <div className="flex items-center gap-2 rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3.5 py-2.5">
+              <Search size={15} className="text-[var(--color-ink-muted)]" />
+              <input
+                value={searchFilter}
+                onChange={(e) => setSearchFilter(e.target.value)}
+                placeholder="Filter your searches by keyword…"
+                className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-[var(--color-ink-muted)]"
+              />
+              {searchFilter && (
+                <button onClick={() => setSearchFilter("")} className="shrink-0 text-[12px] font-semibold text-[var(--color-ink-muted)]">
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {searchGroups.count === 0 ? (
+              <p className="px-1 py-6 text-center text-[12.5px] text-[var(--color-ink-muted)]">
+                No searches match “{searchFilter}”.
+              </p>
+            ) : (
+              searchGroups.groups.map((g) => (
+                <div key={g.label}>
+                  <p className="mb-1.5 px-1 text-[11.5px] font-bold uppercase tracking-wide text-[var(--color-ink-muted)]">
+                    {g.label} · {g.items.length}
+                  </p>
+                  <div className="flex flex-col gap-2.5">
+                    {g.items.map((s) => (
+                      <SearchRow key={s.id} s={s} onOpen={() => openSearch(s)} />
+                    ))}
                   </div>
                 </div>
-                <span className="flex shrink-0 items-center gap-2">
-                  <span
-                    className="rounded-lg bg-[var(--color-accent-soft)] px-2.5 py-1 text-[12px] font-bold tabular-nums"
-                    style={{ color: ACCENT }}
-                  >
-                    {compact(s.ad_count)} ads
-                  </span>
-                  <ArrowRight size={16} className="text-[var(--color-ink-muted)]" />
-                </span>
-              </button>
-            ))}
+              ))
+            )}
           </div>
         ))}
 
