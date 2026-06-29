@@ -8,7 +8,6 @@ import {
   Card,
   Badge,
   WinnerBadge,
-  Tabs,
   EmptyState,
   Modal,
   Stat,
@@ -486,6 +485,12 @@ export default function SourceClient({
     () => batchAds.filter((a) => vFilter(a.vertical) && indOk(a)),
     [batchAds, vertical, independentOnly],
   );
+  // A search's ads, sorted by the toolbar choice (most recent by default).
+  const batchSorted = useMemo(() => {
+    const arr = [...batchF];
+    arr.sort((a, b) => (sort === "recent" ? a.days_running - b.days_running : b.winner_score - a.winner_score));
+    return arr;
+  }, [batchF, sort]);
 
   // Open one search batch: load only the ads tagged with its search_id.
   async function openSearch(s: SearchBatch) {
@@ -547,8 +552,16 @@ export default function SourceClient({
             : `Found ${m.total_fetched} ads — all already in your app, no duplicates added.`,
         );
       }
-      setTab("creatives"); // land on the freshly pulled ads (recent first)
-      clearLibSearch();
+      // Land directly in the ads this pull brought back (its new search batch).
+      const sid = (r.data as { search_id?: string })?.search_id;
+      if (sid) {
+        openSearch({
+          id: sid,
+          keyword: query.trim(),
+          ad_count: m?.total_fetched ?? 0,
+          created_at: new Date().toISOString(),
+        });
+      }
       router.refresh();
     });
   }
@@ -729,19 +742,7 @@ export default function SourceClient({
         </p>
       )}
 
-      {/* Your searches (default) · Ads · Brands */}
-      <div className="mb-4">
-        <Tabs
-          accent={ACCENT}
-          active={tab}
-          onChange={setTab}
-          tabs={[
-            { id: "searches", label: `Searches${searches.length ? ` · ${searches.length}` : ""}` },
-            { id: "creatives", label: `Ads${crv.length ? ` · ${crv.length}` : ""}` },
-            { id: "advertisers", label: `Brands${adv.length ? ` · ${adv.length}` : ""}` },
-          ]}
-        />
-      </div>
+      {/* No tabs: Source is your searches (tap one → its ads). */}
 
       {/* ── Scaled winners (duplication = proven) ───────────────────────── */}
       {tab === "scaled" &&
@@ -1054,13 +1055,46 @@ export default function SourceClient({
               />
             ) : (
               <>
+                {/* Sort / filter the ads inside this search */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <FilterSelect
+                    label="Sort"
+                    value={sort}
+                    onChange={(v) => setSort(v as "recent" | "top")}
+                    options={[
+                      { value: "recent", label: "Most recent" },
+                      { value: "top", label: "Top winners" },
+                    ]}
+                  />
+                  <FilterSelect
+                    label="Vertical"
+                    value={vertical}
+                    onChange={setVertical}
+                    options={[
+                      { value: "all", label: "All" },
+                      ...verticals.map((v) => ({ value: v, label: verticalLabel(v) })),
+                    ]}
+                  />
+                  <button
+                    onClick={() => setIndependentOnly((v) => !v)}
+                    title="Hide market leaders and advocacy/issue ads — show only independent operators"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-pill)] border px-3 py-1.5 text-[12.5px] font-bold"
+                    style={
+                      independentOnly
+                        ? { background: ACCENT, color: "white", borderColor: ACCENT }
+                        : { borderColor: "var(--color-line)", color: "var(--color-ink-muted)" }
+                    }
+                  >
+                    {independentOnly ? "✓ Independent only" : "Independent only"}
+                  </button>
+                </div>
                 <p className="px-1 text-[11.5px] text-[var(--color-ink-muted)]">
-                  Showing {batchF.length.toLocaleString()} ad{batchF.length === 1 ? "" : "s"} from “{activeSearch.keyword}”, highest winner score first.
+                  {batchF.length.toLocaleString()} ad{batchF.length === 1 ? "" : "s"} from “{activeSearch.keyword}” · {sort === "recent" ? "newest first" : "top winners first"}.
                   {independentOnly && batchAds.length - batchF.length > 0
                     ? ` ${(batchAds.length - batchF.length).toLocaleString()} hidden by “Independent only”.`
                     : ""}
                 </p>
-                {batchF.map((c) => (
+                {batchSorted.map((c) => (
                   <AdRowCard key={c.id} c={c} active={detail?.id === c.id} onOpen={() => setDetail(c)} />
                 ))}
               </>
