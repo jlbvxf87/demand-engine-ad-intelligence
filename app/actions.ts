@@ -14,7 +14,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { buildMasterScript } from "@/lib/storyboard";
 import { reconcileStoryboards } from "@/lib/storyboard-reconcile";
+import { reconcileMotionDrafts } from "@/lib/motion-reconcile";
 import { persistVideoToStorage } from "@/lib/persist";
+import { buildDraftPlan, type DraftRenderPlan } from "@/lib/draft-plan";
 import { BROWSER_UA } from "@/lib/http";
 import { unsafeResolvedFetchReason } from "@/lib/ssrf";
 
@@ -637,6 +639,8 @@ export async function pollVideoJobs(): Promise<ActionResult> {
 
     // Re-render any failed storyboard scenes (self-heal) and stitch once ready.
     await reconcileStoryboards(sb, await baseUrl());
+    // Poll AI-motion clips and composite Motion drafts once their clips land.
+    await reconcileMotionDrafts(sb);
 
     if (updated) {
       revalidatePath("/publish");
@@ -841,4 +845,70 @@ export async function replicate(input: {
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Replicate failed" };
   }
+}
+
+/**
+ * Cheap Draft render (Remotion + FFmpeg, no KIE): turn an existing creative's
+ * copy + image into a 9:16 MP4 for cents. Delegates to the /api/renders/draft
+ * route (machine-auth), which renders + persists + flips the row to ready.
+ */
+export async function generateDraftVideo(creativeId: string): Promise<ActionResult> {
+  const r = await callRoute("/api/renders/draft", { creativeId });
+  if (r.ok) revalidatePath("/publish");
+  return r;
+}
+
+/**
+ * Draft from a brief (Video ▸ Draft tab): build copy from the brief and render
+ * N cheap Remotion drafts. Each variant is its own draft creative. Renders are
+ * sequential (each ~10s) — keep the variant count small.
+ */
+export async function generateDraftFromBrief(input: {
+  brief: string;
+  image?: string | null;
+  variants?: number;
+}): Promise<ActionResult> {
+  const brief = (input.brief || "").trim();
+  if (!brief) return { ok: false, error: "Write a brief first" };
+  const variants = Math.max(1, Math.min(3, input.variants ?? 1));
+
+  let created = 0;
+  let lastErr: string | null = null;
+  for (let i = 0; i < variants; i++) {
+    const r = await callRoute("/api/renders/draft", { brief, image: input.image ?? null });
+    if (r.ok) created++;
+    else lastErr = r.error || "Draft render failed";
+  }
+  if (created === 0) return { ok: false, error: lastErr || "All drafts failed" };
+  revalidatePath("/publish");
+  return { ok: true, data: { created } };
+}
+
+/**
+ * Step 1 of the two-step Draft flow: build the scene recipe (Sonnet) WITHOUT
+ * rendering, so the user can review per-scene cost + edit before spending.
+ * Returns the DraftRenderPlan as data.
+ */
+export async function buildDraftRecipe(input: {
+  brief: string;
+  image?: string | null;
+}): Promise<ActionResult> {
+  const brief = (input.brief || "").trim();
+  if (!brief) return { ok: false, error: "Write a brief first" };
+  try {
+    const plan = await buildDraftPlan({ brief, image: input.image });
+    return { ok: true, data: plan };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Failed to build recipe" };
+  }
+}
+
+/** Step 2: render a (possibly edited) recipe to a cheap draft video. */
+export async function renderDraftFromPlan(plan: DraftRenderPlan): Promise<ActionResult> {
+  if (!plan || !Array.isArray(plan.scenes) || plan.scenes.length === 0) {
+    return { ok: false, error: "Empty recipe" };
+  }
+  const r = await callRoute("/api/renders/draft", { plan });
+  if (r.ok) revalidatePath("/publish");
+  return r;
 }

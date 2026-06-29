@@ -633,6 +633,7 @@ export type Creative = {
   t2v_job_id: string | null;
   platform: string;
   creative_type: string;
+  render_mode: string | null;
   inspired_by: string | null;
   created_at: string;
 };
@@ -644,7 +645,7 @@ export async function getGeneratedCreatives(limit = 24): Promise<Creative[]> {
     const { data, error } = await sb
       .from("ad_creatives")
       .select(
-        "id, brand_slug, vertical, hook_type, hook_text, bridge_text, cta_text, image_url, image_prompt, video_url, video_status, video_provider, t2v_job_id, platform, creative_type, inspired_by, created_at"
+        "id, brand_slug, vertical, hook_type, hook_text, bridge_text, cta_text, image_url, image_prompt, video_url, video_status, video_provider, t2v_job_id, platform, creative_type, render_mode, inspired_by, created_at"
       )
       .order("created_at", { ascending: false })
       .limit(limit);

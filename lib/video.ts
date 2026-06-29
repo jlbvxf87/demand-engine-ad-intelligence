@@ -29,6 +29,7 @@ const LABELS: Record<VideoProvider, string> = {
 };
 
 export function providerLabel(p: string | null | undefined): string {
+  if (p === "remotion") return "Draft"; // cheap Remotion render, not a KIE model
   return (p && LABELS[p as VideoProvider]) || "—";
 }
 

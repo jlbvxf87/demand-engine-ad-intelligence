@@ -71,10 +71,10 @@ export default function ReplicatePanel() {
 
   return (
     <Card className="mb-5 p-4" accent={ACCENT}>
-      <p className="text-[15px] font-bold">Replicate from reference</p>
+      <p className="text-[15px] font-bold">Cinematic — rebuild from reference</p>
       <p className="mb-3 text-[12.5px] text-[var(--color-ink-muted)]">
         Drop a creative you liked (an image, or a frame from a video), add instructions, and generate
-        on-style video variations.
+        full AI-video variations. The premium tier — reach for it to upgrade a proven winner.
       </p>
 
       {/* Reference strip */}
@@ -119,17 +119,6 @@ export default function ReplicatePanel() {
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <select
-          value={model}
-          onChange={(e) => setModel(e.target.value as VideoProvider)}
-          className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-2 text-[13px] font-bold outline-none"
-        >
-          {VIDEO_PROVIDERS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-        <select
           value={count}
           onChange={(e) => setCount(Number(e.target.value))}
           className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-2 text-[13px] font-bold outline-none"
@@ -140,6 +129,7 @@ export default function ReplicatePanel() {
             </option>
           ))}
         </select>
+        <span className="text-[12px] text-[var(--color-ink-muted)]">Est. $3–10 each</span>
         <button
           onClick={generate}
           disabled={pending || uploading}
@@ -147,9 +137,27 @@ export default function ReplicatePanel() {
           style={{ background: ACCENT }}
         >
           {pending ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-          Generate {count}
+          Render AI video
         </button>
       </div>
+
+      {/* Model selection is an advanced concern — most users just pick a budget. */}
+      <details className="mt-2.5">
+        <summary className="cursor-pointer text-[12px] font-semibold text-[var(--color-ink-muted)]">
+          Advanced — model
+        </summary>
+        <select
+          value={model}
+          onChange={(e) => setModel(e.target.value as VideoProvider)}
+          className="mt-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-2 text-[13px] font-bold outline-none"
+        >
+          {VIDEO_PROVIDERS.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </details>
 
       {note && (
         <p className="mt-2 rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">

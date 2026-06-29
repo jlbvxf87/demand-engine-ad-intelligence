@@ -5,36 +5,40 @@ import { useRouter } from "next/navigation";
 import {
   Play,
   Download,
-  Upload,
-  FolderInput,
-  RotateCcw,
-  Lock,
   Clapperboard,
   Loader2,
   CheckCircle2,
   Film,
   Trash2,
+  Zap,
 } from "lucide-react";
-import { ScreenHeader, Card, Badge, EmptyState, Modal, Stat, Tabs } from "@/components/ui";
+import { ScreenHeader, Badge, EmptyState, Modal, Tabs } from "@/components/ui";
 import AdThumb from "@/components/AdThumb";
 import { verticalLabel } from "@/lib/format";
 import { VIDEO_PROVIDERS, providerLabel, type VideoProvider } from "@/lib/video";
-import { renderVideo, pollVideoJobs, deleteCreative } from "@/app/actions";
-import ReplicatePanel from "./ReplicatePanel";
-import StoryboardPanel from "./StoryboardPanel";
+import { renderVideo, pollVideoJobs, deleteCreative, generateDraftVideo } from "@/app/actions";
 import CopyPanel from "./CopyPanel";
+import VideoPanel from "./VideoPanel";
+import StoryboardPanel from "./StoryboardPanel";
+import StoriesList from "./StoriesList";
+import PublishPanel from "./PublishPanel";
 import type { Creative, Storyboard } from "@/lib/data";
 
 const ACCENT = "var(--color-publish)";
 
-const TARGETS = [
-  { id: "meta", label: "Meta Ads Direct", icon: Upload },
-  { id: "export", label: "Manual Ad Account Export", icon: FolderInput },
-  { id: "download", label: "Download Files", icon: Download },
+const TABS = [
+  { id: "copy", label: "Copy" },
+  { id: "video", label: "Video" },
+  { id: "stories", label: "Stories" },
+  { id: "publish", label: "Publish" },
 ];
 
 function isRendering(c: Creative) {
-  return c.video_status === "queued" || c.video_status === "rendering";
+  return (
+    c.video_status === "queued" ||
+    c.video_status === "rendering" ||
+    c.video_status === "compositing"
+  );
 }
 
 function fmtElapsed(secs: number) {
@@ -73,29 +77,27 @@ export default function PublishClient({
   storyboards: Storyboard[];
 }) {
   const router = useRouter();
-  const [target, setTarget] = useState("meta");
+  const [tab, setTab] = useState("video");
   const [model, setModel] = useState<VideoProvider>("kling");
   const [review, setReview] = useState<Creative | null>(null);
-  const [mode, setMode] = useState("replicate");
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const anyRendering = creatives.some(isRendering);
   const stills = creatives.filter((c) => !c.video_url && !isRendering(c));
-  // Scene clips belong to a Story (rendered + stitched in the Stories section
-  // above), so keep them out of the standalone reel grid — otherwise the same
-  // footage shows twice. The render/poll logic above still tracks ALL creatives.
+  // Scene clips belong to a Story (shown in the Stories tab), so keep them out of
+  // the standalone reel grid — otherwise the same footage shows twice.
   const standalone = creatives.filter((c) => c.creative_type !== "scene");
   const anyStoryboardActive = storyboards.some((s) =>
     ["scripting", "generating", "stitching"].includes(s.status)
   );
   const polling = anyRendering || anyStoryboardActive;
 
-  // Land on Copy when a brief was handed over from Decode.
+  // A brief handed over from Decode goes straight to Video ▸ Draft.
   useEffect(() => {
     try {
-      if (sessionStorage.getItem("brief:scratch")) setMode("copy");
+      if (sessionStorage.getItem("brief:scratch")) setTab("video");
     } catch {}
   }, []);
 
@@ -121,6 +123,18 @@ export default function PublishClient({
       const r = await renderVideo(id, m);
       setBusyId(null);
       if (!r.ok) setNote(r.error || "Render failed");
+      else router.refresh();
+    });
+  }
+
+  // Cheap Draft render (Remotion + FFmpeg, no KIE credits).
+  function draft(id: string) {
+    setBusyId(id);
+    setNote(null);
+    startTransition(async () => {
+      const r = await generateDraftVideo(id);
+      setBusyId(null);
+      if (!r.ok) setNote(r.error || "Draft render failed");
       else router.refresh();
     });
   }
@@ -155,108 +169,48 @@ export default function PublishClient({
     <div>
       <ScreenHeader
         title="Create"
-        subtitle="Generate copy & video, then publish to test."
+        subtitle="Build ad-ready drafts for cents, then upgrade only the winners."
         badge={creatives.length ? "ready" : "empty"}
         badgeTone={creatives.length ? "publish" : "neutral"}
       />
 
-      {/* Create: copy, single replicate, or multi-scene story */}
+      {/* Production console: Copy → Video → Stories → Publish */}
       <div className="mb-4">
-        <Tabs
-          accent={ACCENT}
-          active={mode}
-          onChange={setMode}
-          tabs={[
-            { id: "copy", label: "Copy" },
-            { id: "replicate", label: "Replicate" },
-            { id: "story", label: "Multi-scene" },
-          ]}
-        />
+        <Tabs accent={ACCENT} active={tab} onChange={setTab} tabs={TABS} />
       </div>
-      {mode === "copy" ? <CopyPanel /> : mode === "replicate" ? <ReplicatePanel /> : <StoryboardPanel />}
 
-      {/* Stories — multi-scene, with the stitched final */}
-      {storyboards.length > 0 && (
-        <div className="mb-5">
-          <p className="mb-2 text-[15px] font-bold">Stories</p>
-          <div className="flex flex-col gap-3">
-            {storyboards.map((s) => (
-              <Card key={s.id} className="p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="line-clamp-1 text-[13.5px] font-bold">{s.prompt}</p>
-                    <p className="text-[11.5px] text-[var(--color-ink-muted)]">
-                      {s.clip_count} scenes · {providerLabel(s.provider)}
-                    </p>
-                    {!isStoryFinished(s) && (
-                      <div className="mt-1.5 max-w-[210px]">
-                        <p className="text-[10.5px] font-bold tabular-nums text-[var(--color-ink-muted)]">
-                          {s.scenesReady} of {s.clip_count} scenes ready
-                        </p>
-                        <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-2)]">
-                          <div
-                            className="h-full rounded-full transition-[width] duration-500"
-                            style={{
-                              width: `${Math.round((s.scenesReady / Math.max(1, s.clip_count)) * 100)}%`,
-                              background: ACCENT,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    {isStoryFinished(s) && s.scenesReady < s.clip_count && (
-                      <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-[var(--color-warn-soft)] px-1.5 py-0.5 text-[10.5px] font-bold text-[var(--color-warn)]">
-                        ⚠ {s.scenesReady} of {s.clip_count} scenes rendered ({s.clip_count - s.scenesReady} failed)
-                      </span>
-                    )}
-                  </div>
-                  <StoryStatus s={s} />
-                </div>
-                {s.final_video_url && (
-                  <div className="mt-2.5 flex flex-wrap items-center gap-3">
-                    {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-                    <video
-                      src={s.final_video_url}
-                      controls
-                      playsInline
-                      className="max-h-[280px] w-auto rounded-xl bg-black"
-                    />
-                    <a
-                      href={s.final_video_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      download
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-semibold"
-                    >
-                      <Download size={14} /> Download story
-                    </a>
-                  </div>
-                )}
-              </Card>
-            ))}
-          </div>
-        </div>
+      {tab === "copy" && <CopyPanel />}
+      {tab === "video" && <VideoPanel />}
+      {tab === "stories" && (
+        <>
+          <StoryboardPanel />
+          <StoriesList storyboards={storyboards} />
+        </>
       )}
+      {tab === "publish" && <PublishPanel publishableCount={standalone.length} />}
 
-      {/* Model picker + render-all */}
-      {creatives.length > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-[13px]">
-            <Film size={15} className="text-[var(--color-ink-muted)]" />
-            <span className="font-semibold text-[var(--color-ink-muted)]">Model</span>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value as VideoProvider)}
-              className="bg-transparent text-[13px] font-bold outline-none"
-            >
-              {VIDEO_PROVIDERS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {stills.length > 0 && (
+      {/* ── Outputs (persistent across tabs) ───────────────────────────────── */}
+      <div className="mt-6 border-t border-[var(--color-line)] pt-5">
+        <p className="mb-2 text-[15px] font-bold">Outputs</p>
+
+        {/* Model picker + render-all stills (KIE batch) */}
+        {stills.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] bg-[var(--color-surface)] px-3 py-2 text-[13px]">
+              <Film size={15} className="text-[var(--color-ink-muted)]" />
+              <span className="font-semibold text-[var(--color-ink-muted)]">Model</span>
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value as VideoProvider)}
+                className="bg-transparent text-[13px] font-bold outline-none"
+              >
+                {VIDEO_PROVIDERS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button
               onClick={renderAll}
               disabled={pending}
@@ -266,109 +220,30 @@ export default function PublishClient({
               {pending ? <Loader2 size={14} className="animate-spin" /> : <Clapperboard size={14} />}
               Render {stills.length} still{stills.length > 1 ? "s" : ""}
             </button>
-          )}
-        </div>
-      )}
+          </div>
+        )}
 
-      {/* Reel grid */}
-      {standalone.length === 0 ? (
-        <EmptyState
-          icon={Play}
-          title="Nothing to publish yet"
-          hint="Generate creatives in Rebuild, then they queue here."
-        />
-      ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {standalone.map((c) => (
-            <ReelTile key={c.id} c={c} onClick={() => setReview(c)} />
-          ))}
-        </div>
-      )}
+        {/* Reel grid */}
+        {standalone.length === 0 ? (
+          <EmptyState
+            icon={Play}
+            title="Nothing here yet"
+            hint="Generate copy or a draft above — your outputs queue here."
+          />
+        ) : (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {standalone.map((c) => (
+              <ReelTile key={c.id} c={c} onClick={() => setReview(c)} />
+            ))}
+          </div>
+        )}
 
-      {note && (
-        <p className="mt-3 rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">
-          {note}
-        </p>
-      )}
-
-      {/* Publish targets */}
-      <p className="mb-2 mt-7 text-[15px] font-bold">Publish To</p>
-      <div className="flex flex-col gap-2.5">
-        {TARGETS.map((t) => {
-          const on = t.id === target;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTarget(t.id)}
-              className="flex items-center gap-3 rounded-2xl border px-4 py-3 text-left transition-colors"
-              style={{
-                borderColor: on ? ACCENT : "var(--color-line)",
-                background: on ? "var(--color-publish-soft)" : "var(--color-surface)",
-              }}
-            >
-              <span
-                className="grid h-6 w-6 place-items-center rounded-full border-2"
-                style={{ borderColor: on ? ACCENT : "var(--color-line)" }}
-              >
-                {on && <span className="h-2.5 w-2.5 rounded-full" style={{ background: ACCENT }} />}
-              </span>
-              <t.icon size={17} style={{ color: on ? ACCENT : "var(--color-ink-muted)" }} />
-              <span className="text-[14px] font-semibold" style={{ color: on ? ACCENT : "var(--color-ink)" }}>
-                {t.label}
-              </span>
-            </button>
-          );
-        })}
+        {note && (
+          <p className="mt-3 rounded-lg bg-[var(--color-warn-soft)] px-3 py-2 text-[12.5px] text-[var(--color-warn)]">
+            {note}
+          </p>
+        )}
       </div>
-
-      {/* Run performance */}
-      <p className="mb-2 mt-6 text-[15px] font-bold">Run Performance</p>
-      <Card className="p-4">
-        <div className="grid grid-cols-4 gap-2">
-          {[
-            ["CTR", "—"],
-            ["CPC", "—"],
-            ["Spend", "—"],
-            ["Leads", "—"],
-          ].map(([k, v]) => (
-            <div key={k}>
-              <p className="text-[11px] font-semibold uppercase text-[var(--color-ink-muted)]">{k}</p>
-              <p className="text-[18px] font-extrabold tabular-nums">{v}</p>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 flex items-center gap-1.5 rounded-lg bg-[var(--color-surface-2)] px-3 py-2 text-[12px] text-[var(--color-ink-muted)]">
-          <Lock size={13} />
-          Connect the Meta Marketing API to stream live CTR, CPC, spend & leads.
-        </div>
-      </Card>
-
-      {/* Winner loop */}
-      <Card className="mt-4 p-4">
-        <p className="text-[14px] font-bold text-[var(--color-publish)]">Winner Loop</p>
-        <p className="mt-0.5 text-[12.5px] text-[var(--color-ink-muted)]">
-          Top performers re-enter Source as new reference material.
-        </p>
-        <div className="mt-3 flex gap-2">
-          <button className="flex items-center gap-1.5 rounded-xl bg-[var(--color-publish-soft)] px-3 py-2 text-[12.5px] font-bold text-[var(--color-publish)]">
-            Rank winners
-          </button>
-          <button
-            onClick={() => router.push("/source")}
-            className="flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[12.5px] font-bold"
-          >
-            <RotateCcw size={13} /> Back to library
-          </button>
-        </div>
-      </Card>
-
-      <button
-        disabled={standalone.length === 0}
-        className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl px-5 py-4 text-[16px] font-bold text-white disabled:opacity-40 active:scale-[0.99]"
-        style={{ background: ACCENT }}
-      >
-        <Play size={18} /> Publish {standalone.length || ""} Creatives
-      </button>
 
       {/* ── Creative review ─────────────────────────────────────────────── */}
       <Modal
@@ -445,6 +320,22 @@ export default function PublishClient({
             <div className="flex flex-wrap items-center gap-2">
               {!review.video_url && (
                 <>
+                  {/* Cheap-first: render a 9:16 draft with Remotion for cents — no KIE credits. */}
+                  <button
+                    onClick={() => draft(review.id)}
+                    disabled={(pending && busyId === review.id) || isRendering(review)}
+                    className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[13px] font-bold text-white disabled:opacity-60"
+                    style={{ background: ACCENT }}
+                    title="Render a 9:16 draft with Remotion — no AI-video credits"
+                  >
+                    {pending && busyId === review.id ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : (
+                      <Zap size={14} />
+                    )}
+                    Generate Draft Video
+                  </button>
+                  {/* Expensive AI-video path (KIE), demoted to secondary. */}
                   <select
                     value={model}
                     onChange={(e) => setModel(e.target.value as VideoProvider)}
@@ -459,15 +350,15 @@ export default function PublishClient({
                   <button
                     onClick={() => render(review.id, model)}
                     disabled={(pending && busyId === review.id) || isRendering(review)}
-                    className="inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-[13px] font-bold text-white disabled:opacity-60"
-                    style={{ background: ACCENT }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3.5 py-2.5 text-[13px] font-bold disabled:opacity-60"
+                    style={{ color: ACCENT }}
                   >
                     {(pending && busyId === review.id) || isRendering(review) ? (
                       <Loader2 size={14} className="animate-spin" />
                     ) : (
                       <Clapperboard size={14} />
                     )}
-                    {isRendering(review) ? "Rendering…" : "Render video"}
+                    {isRendering(review) ? "Rendering…" : "Render AI video"}
                   </button>
                 </>
               )}
@@ -497,7 +388,7 @@ export default function PublishClient({
   );
 }
 
-/* One vertical reel tile in the Studio grid. */
+/* One vertical reel tile in the outputs grid. */
 function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
   const rendering = isRendering(c);
   const elapsed = useRenderElapsed(rendering, c.created_at);
@@ -584,23 +475,6 @@ function ReelTile({ c, onClick }: { c: Creative; onClick: () => void }) {
       </div>
     </button>
   );
-}
-
-/* A story is "finished" once it's done rendering/stitching — i.e. it has a
-   stitched final OR is no longer actively scripting/generating/stitching. Only
-   then is a short scene count a real failure (vs scenes still on the way). */
-function isStoryFinished(s: Storyboard) {
-  if (s.final_video_url) return true;
-  return !["scripting", "generating", "stitching"].includes(s.status);
-}
-
-/* Status pill for a storyboard row. */
-function StoryStatus({ s }: { s: Storyboard }) {
-  if (s.final_video_url) return <Badge tone="publish">Story ready</Badge>;
-  if (s.status === "stitching") return <Badge tone="decode">Stitching…</Badge>;
-  if (s.status === "failed" || s.final_status === "failed") return <Badge tone="danger">Failed</Badge>;
-  if (s.status === "scripting") return <Badge tone="warn">Scripting…</Badge>;
-  return <Badge tone="decode">Rendering scenes…</Badge>;
 }
 
 /* Labelled copy block for the review modal. */
