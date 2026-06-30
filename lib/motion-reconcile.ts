@@ -2,7 +2,7 @@ import "server-only";
 import { getServiceClient } from "@/lib/supabase/server";
 import { submitKieVideo, pollKieVideo, isVideoProvider } from "@/lib/kie";
 import { persistVideoToStorage, uploadLocalVideo } from "@/lib/persist";
-import { renderDraftVideo, draftWorkerConfigured, dispatchToWorker } from "@/lib/draft-render";
+import { draftWorkerConfigured, dispatchToWorker } from "@/lib/draft-worker";
 import { PROVIDER_DURATIONS, type VideoProvider } from "@/lib/video";
 import { methodCost, type DraftRenderPlan, type DraftScene } from "../remotion/types";
 
@@ -141,8 +141,9 @@ export async function reconcileMotionDrafts(sb: SB, origin: string): Promise<voi
       continue;
     }
 
-    // Local: composite inline.
+    // Local: composite inline. Lazy-import so @remotion/* never loads on Vercel.
     try {
+      const { renderDraftVideo } = await import("@/lib/draft-render");
       const rendered = await renderDraftVideo(plan, d.id);
       if (!rendered.ok || !rendered.localPath) throw new Error(rendered.error || "Composite failed");
       const url = await uploadLocalVideo(rendered.localPath, d.id);
