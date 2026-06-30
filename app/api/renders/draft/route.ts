@@ -121,6 +121,16 @@ export async function POST(req: Request) {
       }
     }
 
+    // No worker + on Vercel: inline Remotion can't run here — fail fast & clearly
+    // instead of hanging the function until it times out.
+    if (process.env.VERCEL) {
+      await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", creativeId);
+      return NextResponse.json(
+        { error: "Draft rendering is being set up — the render worker isn't connected yet." },
+        { status: 503 },
+      );
+    }
+
     // Local: render inline.
     const rendered = await renderDraftVideo(plan, creativeId);
     if (!rendered.ok || !rendered.localPath) {

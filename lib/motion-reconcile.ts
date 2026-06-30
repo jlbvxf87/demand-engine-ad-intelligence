@@ -134,6 +134,13 @@ export async function reconcileMotionDrafts(sb: SB, origin: string): Promise<voi
       continue;
     }
 
+    // No worker + on Vercel: can't composite inline here — mark failed (a later
+    // deploy with DRAFT_WORKER_URL set will render it via the worker).
+    if (process.env.VERCEL) {
+      await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", d.id);
+      continue;
+    }
+
     // Local: composite inline.
     try {
       const rendered = await renderDraftVideo(plan, d.id);
