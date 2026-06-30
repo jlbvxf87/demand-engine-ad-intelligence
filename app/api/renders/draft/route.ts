@@ -3,7 +3,7 @@ import { isAdminAuthed } from "@/lib/admin-auth";
 import { isMachineAuthed } from "@/lib/machine-auth";
 import { getServiceClient } from "@/lib/supabase/server";
 import { buildDraftPlan, type DraftRenderPlan } from "@/lib/draft-plan";
-import { renderDraftVideo, draftWorkerConfigured, dispatchToWorker } from "@/lib/draft-render";
+import { draftWorkerConfigured, dispatchToWorker } from "@/lib/draft-worker";
 import { uploadLocalVideo } from "@/lib/persist";
 import { submitKieVideo, isVideoProvider } from "@/lib/kie";
 import { PROVIDER_DURATIONS, type VideoProvider } from "@/lib/video";
@@ -131,7 +131,8 @@ export async function POST(req: Request) {
       );
     }
 
-    // Local: render inline.
+    // Local: render inline. Lazy-import so @remotion/* never loads on Vercel.
+    const { renderDraftVideo } = await import("@/lib/draft-render");
     const rendered = await renderDraftVideo(plan, creativeId);
     if (!rendered.ok || !rendered.localPath) {
       await sb.from("ad_creatives").update({ video_status: "failed" }).eq("id", creativeId);

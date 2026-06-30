@@ -9,35 +9,6 @@ import { DRAFT_COMPOSITION_ID, type DraftRenderPlan } from "../remotion/types";
 
 export type DraftRenderResult = { ok: boolean; localPath?: string; error?: string };
 
-/** True when an external render worker is configured (prod). When set, renders
- *  are offloaded to it instead of running inline (Vercel can't run Remotion). */
-export function draftWorkerConfigured(): boolean {
-  return !!process.env.DRAFT_WORKER_URL;
-}
-
-/**
- * Hand a render-plan to the external draft-render-worker. It renders + uploads to
- * Supabase and POSTs back to `${origin}/api/renders/draft-callback`. Mirrors the
- * stitch-worker dispatch. Throws if the worker rejects the job.
- */
-export async function dispatchToWorker(
-  plan: DraftRenderPlan,
-  creativeId: string,
-  origin: string,
-): Promise<void> {
-  const base = process.env.DRAFT_WORKER_URL;
-  if (!base) throw new Error("DRAFT_WORKER_URL not set");
-  const secret = process.env.DRAFT_WEBHOOK_SECRET || "";
-  const callbackUrl = `${origin}/api/renders/draft-callback${secret ? `?key=${encodeURIComponent(secret)}` : ""}`;
-  const res = await fetch(`${base.replace(/\/$/, "")}/render`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-worker-secret": secret },
-    body: JSON.stringify({ plan, creativeId, callbackUrl }),
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(`render worker HTTP ${res.status}`);
-}
-
 // Bundle the Remotion entry once per server process — bundling is the slow part,
 // so every render after the first reuses the cached serve URL.
 let bundlePromise: Promise<string> | null = null;
