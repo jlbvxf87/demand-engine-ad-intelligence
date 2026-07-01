@@ -1,0 +1,7 @@
+#!/bin/sh
+# Auto-sync the draft-render-worker's Remotion copy from the canonical remotion/
+# whenever a commit touches remotion/, so the two never drift. See scripts/sync-remotion.mjs.
+if git diff --cached --name-only | grep -q '^remotion/'; then
+  node scripts/sync-remotion.mjs || exit 1
+  git add draft-render-worker/remotion/
+fi

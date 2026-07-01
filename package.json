@@ -7,7 +7,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "sync-remotion": "node scripts/sync-remotion.mjs",
+    "check-remotion": "node scripts/check-remotion-sync.mjs",
+    "prebuild": "node scripts/check-remotion-sync.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.92.0",
