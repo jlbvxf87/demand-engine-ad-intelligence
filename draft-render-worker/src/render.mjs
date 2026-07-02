@@ -46,7 +46,8 @@ function normalize(input, output) {
 export function extractPoster(videoPath, id) {
   return new Promise((resolve) => {
     const out = path.join(os.tmpdir(), `poster-${id}.jpg`);
-    const args = ["-y", "-i", videoPath, "-frames:v", "1", "-q:v", "3", out];
+    // Seek ~1s in, past the scene fade-in (frame 0 is transparent → dark bg).
+    const args = ["-y", "-ss", "1", "-i", videoPath, "-frames:v", "1", "-q:v", "3", out];
     let proc;
     try {
       proc = spawn("ffmpeg", args, { stdio: "ignore" });
