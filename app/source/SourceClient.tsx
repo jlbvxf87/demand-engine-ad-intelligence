@@ -1314,7 +1314,7 @@ export default function SourceClient({
             )}
 
             {/* Metrics */}
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <Stat label="Winner" value={Math.round(detail.winner_score)} accent={ACCENT} />
               <Stat label="Days" value={detail.days_running} />
               <Stat label="Spend" value={money(detail.spend_lower, detail.spend_upper)} />
