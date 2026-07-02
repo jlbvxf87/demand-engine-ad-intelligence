@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -12,6 +13,12 @@ function isActive(pathname: string, href: string) {
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || "/";
+  // Optimistic active state: highlight the tapped item IMMEDIATELY (before the
+  // server-rendered page arrives), then reconcile once the route actually changes.
+  // Dynamic pages take up to ~2s to render, so without this the nav feels dead.
+  const [tapped, setTapped] = useState<string | null>(null);
+  useEffect(() => setTapped(null), [pathname]);
+  const navHref = tapped ?? pathname;
 
   return (
     <div className="min-h-dvh w-full md:flex">
@@ -30,12 +37,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
         <nav className="flex flex-col gap-1">
           {NAV.map((item) => {
-            const active = isActive(pathname, item.href);
+            const active = isActive(navHref, item.href);
             const Icon = item.icon;
             return (
               <Link
                 key={item.stage}
                 href={item.href}
+                prefetch
+                onClick={() => setTapped(item.href)}
                 className="group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-medium transition-colors"
                 style={{
                   background: active ? item.accentSoft : "transparent",
@@ -93,16 +102,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {/* ── Mobile bottom nav ───────────────────────────────────────────── */}
       <nav className="fixed inset-x-0 bottom-0 z-30 flex items-stretch justify-around border-t border-[var(--color-line)] bg-[var(--color-surface)]/95 pb-[max(0.4rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur md:hidden">
         {NAV.map((item) => {
-          const active = isActive(pathname, item.href);
+          const active = isActive(navHref, item.href);
           const Icon = item.icon;
           return (
             <Link
               key={item.stage}
               href={item.href}
-              className="flex flex-1 flex-col items-center gap-1 py-1"
+              prefetch
+              onClick={() => setTapped(item.href)}
+              className="flex flex-1 flex-col items-center gap-1 py-1 active:opacity-70"
             >
               <span
-                className="grid h-8 w-[52px] place-items-center rounded-full transition-colors duration-200"
+                className="grid h-8 w-[52px] place-items-center rounded-full transition-[background,color] duration-150"
                 style={{
                   background: active ? "var(--color-accent-soft)" : "transparent",
                   color: active ? item.accent : "var(--color-ink-muted)",
