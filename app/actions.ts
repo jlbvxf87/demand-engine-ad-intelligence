@@ -586,6 +586,55 @@ export async function deleteCreative(id: string): Promise<ActionResult> {
   }
 }
 
+/** Delete a Story (storyboard) — its scene clips, the stitched final, and their
+ *  storage files. Best-effort on storage; DB rows always removed. */
+export async function deleteStoryboard(id: string): Promise<ActionResult> {
+  if (!id) return { ok: false, error: "Missing id" };
+  try {
+    const sb = getServiceClient();
+    const { data: story } = await sb
+      .from("storyboards")
+      .select("final_video_url")
+      .eq("id", id)
+      .single();
+    const { data: scenes } = await sb
+      .from("ad_creatives")
+      .select("video_url")
+      .eq("storyboard_id", id);
+
+    // Remove DB rows: scene creatives first, then the storyboard.
+    await sb.from("ad_creatives").delete().eq("storyboard_id", id);
+    const { error } = await sb.from("storyboards").delete().eq("id", id);
+    if (error) return { ok: false, error: error.message };
+
+    // Best-effort storage cleanup: scene clips + everything under storyboards/<id>/.
+    const urls = [
+      (story as { final_video_url?: string | null } | null)?.final_video_url,
+      ...(((scenes as { video_url?: string | null }[] | null) || []).map((s) => s.video_url)),
+    ];
+    for (const u of urls) {
+      const loc = parseStoragePublicUrl(u);
+      if (loc && loc.bucket === "ad-creatives") {
+        try {
+          await sb.storage.from(loc.bucket).remove([loc.path]);
+        } catch {}
+      }
+    }
+    try {
+      const { data: files } = await sb.storage.from("ad-creatives").list(`storyboards/${id}`);
+      if (files?.length) {
+        await sb.storage.from("ad-creatives").remove(files.map((f) => `storyboards/${id}/${f.name}`));
+      }
+    } catch {}
+
+    revalidatePath("/");
+    revalidatePath("/publish");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Delete failed" };
+  }
+}
+
 /**
  * Poll every in-progress kie job and persist results. Called on an interval by
  * the Studio while any creative is rendering. Returns how many flipped state.
