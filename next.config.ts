@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Server actions default to a 1MB request body — too small for image uploads.
+  // We compress client-side (lib/compress-image) so files are ~0.5MB, but raise
+  // the ceiling as a safety net. (Vercel functions still cap bodies at ~4.5MB.)
+  experimental: {
+    serverActions: { bodySizeLimit: "10mb" },
+  },
   // Remotion's renderer/bundler are Node-only (native deps, spawn Chromium) —
   // never pull them into Next's server bundle.
   serverExternalPackages: ["@remotion/bundler", "@remotion/renderer", "remotion"],

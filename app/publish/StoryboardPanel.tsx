@@ -6,6 +6,7 @@ import { X, Loader2, ImagePlus, Clapperboard } from "lucide-react";
 import { Card } from "@/components/ui";
 import { VIDEO_PROVIDERS, PROVIDER_DURATIONS, type VideoProvider } from "@/lib/video";
 import { uploadReference, createStoryboard } from "@/app/actions";
+import { compressImage } from "@/lib/compress-image";
 
 const ACCENT = "var(--color-publish)";
 
@@ -32,8 +33,9 @@ export default function StoryboardPanel() {
     setUploading(true);
     setNote(null);
     for (const f of files) {
+      const file = await compressImage(f);
       const fd = new FormData();
-      fd.append("file", f);
+      fd.append("file", file);
       const r = await uploadReference(fd);
       if (r.ok && r.url) setImages((prev) => [...prev, r.url as string]);
       else setNote(r.error || "Upload failed");

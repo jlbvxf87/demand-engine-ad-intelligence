@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Zap, Loader2, ImagePlus, X, Sparkles, RotateCcw } from "lucide-react";
 import { Card } from "@/components/ui";
 import { uploadReference, buildDraftRecipe, renderDraftFromPlan } from "@/app/actions";
+import { compressImage } from "@/lib/compress-image";
 import SceneRecipe from "./SceneRecipe";
 import type { DraftRenderPlan } from "@/remotion/types";
 
@@ -33,10 +34,11 @@ export default function DraftPanel({ tier = "draft" }: { tier?: "draft" | "motio
   }, []);
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const picked = e.target.files?.[0];
+    if (!picked) return;
     setUploading(true);
     setNote(null);
+    const file = await compressImage(picked);
     const fd = new FormData();
     fd.append("file", file);
     const r = await uploadReference(fd);
