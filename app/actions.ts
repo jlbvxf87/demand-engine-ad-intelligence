@@ -767,7 +767,11 @@ export async function createStoryboard(input: {
           image_url: img,
           hook_type: "scene",
           platform: "meta",
-          creative_type: "scene",
+          // Auto-stitch scenes stay 'scene' (hidden from Outputs, grouped in the
+          // story). Individual-mode scenes are 'scene_clip' so they ALSO surface
+          // in Outputs/Assemble as standalone clips. Grouping/reconcile key on
+          // storyboard_id, so both still work.
+          creative_type: autoStitch ? "scene" : "scene_clip",
           video_status: "rendering",
           video_provider: provider,
           video_attempts: 1, // this initial submit; reconciler retries up to the cap
