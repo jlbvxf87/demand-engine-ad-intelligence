@@ -1,7 +1,17 @@
 import { NextResponse } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { isMachineAuthed } from "@/lib/machine-auth";
 import { isAdminAuthed } from "@/lib/admin-auth";
 import { createStoryboard } from "@/app/actions";
+
+// Also accept the service-role key (already an admin-level secret) via x-api-key,
+// so programmatic runs can authenticate without a browser session.
+function isServiceKeyAuthed(req: Request): boolean {
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const header = req.headers.get("x-api-key");
+  if (!key || !header || key.length !== header.length) return false;
+  return timingSafeEqual(Buffer.from(key), Buffer.from(header));
+}
 
 // Programmatic storyboard creation (e.g. verbatim per-scene scripts) — used to
 // kick off a run with exact lines/shots without going through the UI. Auth-gated.
@@ -19,7 +29,7 @@ type Body = {
 };
 
 export async function POST(req: Request) {
-  if (!isMachineAuthed(req) && !(await isAdminAuthed())) {
+  if (!isMachineAuthed(req) && !isServiceKeyAuthed(req) && !(await isAdminAuthed())) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
   let body: Body;
