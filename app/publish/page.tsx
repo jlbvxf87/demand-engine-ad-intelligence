@@ -1,12 +1,12 @@
 import { getGeneratedCreatives, getStoryboards } from "@/lib/data";
-import PublishClient from "./PublishClient";
+import SimpleCreate from "./SimpleCreate";
 
 export const dynamic = "force-dynamic";
 
 export default async function PublishPage() {
   const [creatives, storyboards] = await Promise.all([
-    getGeneratedCreatives(18),
+    getGeneratedCreatives(200),
     getStoryboards(8),
   ]);
-  return <PublishClient creatives={creatives} storyboards={storyboards} />;
+  return <SimpleCreate creatives={creatives} storyboards={storyboards} />;
 }

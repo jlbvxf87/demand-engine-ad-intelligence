@@ -50,7 +50,7 @@ export default async function HomePage() {
   const [stats, scaledRaw, creatives, credits] = await Promise.all([
     getHomeStats(),
     getScaledWinners(40),
-    getGeneratedCreatives(12),
+    getGeneratedCreatives(60),
     getKieCredits(),
   ]);
   // ONLY proven winners: creatives an independent operator is running at SCALE
