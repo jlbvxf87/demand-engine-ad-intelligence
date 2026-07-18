@@ -23,12 +23,16 @@ type SubmitOpts = {
   /** Primary reference first, then optional guide images. */
   referenceImageUrls?: string[] | null;
   duration?: number; // seconds, default 9
+  /** false = render a SILENT clip (no spoken voice / audio track). Default true.
+   *  Used by "Action only" mode so a Kling clip is pure visual, no talking head. */
+  sound?: boolean;
 };
 
 function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknown> } {
   const imgs = (o.referenceImageUrls || []).filter(Boolean);
   const i2v = o.mode === "image-to-video" && imgs.length > 0;
   const dur = o.duration ?? 9;
+  const sound = o.sound !== false; // default on
 
   switch (o.provider) {
     case "seedance":
@@ -44,7 +48,7 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
             duration: String(clamp(dur, 4, 15)),
             resolution: "1080p",
             fixed_lens: false,
-            generate_audio: true,
+            generate_audio: sound,
             ...(i2v ? { input_urls: imgs } : {}),
           },
         },
@@ -56,7 +60,7 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
           model: "kling-3.0/video",
           input: {
             prompt: o.prompt.slice(0, 1000),
-            sound: true,
+            sound,
             aspect_ratio: "9:16",
             duration: String(clamp(dur, 3, 15)),
             mode: "pro",
@@ -77,7 +81,7 @@ function buildRequest(o: SubmitOpts): { url: string; body: Record<string, unknow
             n_frames: dur >= 13 ? "15" : "10",
             size: "high",
             remove_watermark: true,
-            sound: true,
+            sound,
             upload_method: "s3",
             ...(i2v ? { image_urls: imgs } : {}),
           },

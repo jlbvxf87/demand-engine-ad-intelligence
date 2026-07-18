@@ -492,6 +492,45 @@ export async function deleteCreative(id: string): Promise<ActionResult> {
   }
 }
 
+/**
+ * Bulk-delete creatives — powers the "Delete" control on the Create studio's
+ * multi-select bar. Removes all rows in one query, then best-effort drops each
+ * clip's stored video/still so nothing is orphaned.
+ */
+export async function deleteCreatives(ids: string[]): Promise<ActionResult> {
+  const clean = Array.from(new Set((ids || []).filter(Boolean)));
+  if (clean.length === 0) return { ok: false, error: "Nothing selected" };
+  try {
+    const sb = getServiceClient();
+    const { data } = await sb
+      .from("ad_creatives")
+      .select("video_url, image_url")
+      .in("id", clean);
+    const rows = (data as { video_url?: string | null; image_url?: string | null }[] | null) || [];
+
+    const { error } = await sb.from("ad_creatives").delete().in("id", clean);
+    if (error) return { ok: false, error: error.message };
+
+    // Best-effort cleanup of our own buckets only; ignore failures.
+    for (const row of rows) {
+      for (const u of [row.video_url, row.image_url]) {
+        const loc = parseStoragePublicUrl(u);
+        if (loc && (loc.bucket === "ad-creatives" || loc.bucket === "ad-references")) {
+          try {
+            await sb.storage.from(loc.bucket).remove([loc.path]);
+          } catch {}
+        }
+      }
+    }
+
+    revalidatePath("/");
+    revalidatePath("/publish");
+    return { ok: true, data: { deleted: clean.length } };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Delete failed" };
+  }
+}
+
 /** Delete a Story (storyboard) — its scene clips, the stitched final, and their
  *  storage files. Best-effort on storage; DB rows always removed. */
 export async function deleteStoryboard(id: string): Promise<ActionResult> {
@@ -647,6 +686,9 @@ export async function createStoryboard(input: {
   sceneCount?: number; // used when no reference frames are uploaded (text-to-video scenes)
   /** false = generate individual downloadable scenes and DON'T auto-stitch (default true). */
   autoStitch?: boolean;
+  /** false = render SILENT action clips (no spoken voice / audio) — pairs with
+   *  "broll" scenes so no one talks to camera. Default true (talking head + voice). */
+  sound?: boolean;
   /** Verbatim per-scene script: skip Sonnet and use these exact lines/shots. One per scene.
    *  `duration` (seconds) overrides durationPerClip for that scene — used by the
    *  Create page's auto-fit, which sizes each clip to the line it must speak. */
@@ -679,6 +721,7 @@ export async function createStoryboard(input: {
   if (!prompt && explicit.length === 0) return { ok: false, error: "A story brief is required" };
   const durationPerClip = input.durationPerClip ?? 5;
   const autoStitch = input.autoStitch !== false; // default true
+  const sound = input.sound !== false; // default true; false = silent "action only" clips
 
   try {
     const sb = getServiceClient();
@@ -706,8 +749,9 @@ export async function createStoryboard(input: {
         clip_count: clipCount,
         duration_per_clip: durationPerClip,
         status: "generating",
-        // autoStitch lives in the script JSON (no dedicated column) — reconcile reads it.
-        master_script_json: { scenes, autoStitch },
+        // autoStitch + sound live in the script JSON (no dedicated columns) —
+        // reconcile reads them so self-heal retries match the original render.
+        master_script_json: { scenes, autoStitch, sound },
         final_status: "none",
       })
       .select("id")
@@ -720,13 +764,26 @@ export async function createStoryboard(input: {
     for (let i = 0; i < clipCount; i++) {
       const scene = scenes[i];
       const img = imgs[i] ?? null; // null for text-to-video scenes
+      // Build the ACTUAL prompt we submit per shot_type, up front, so we can
+      // persist it (image_prompt) — the reconciler re-submits image_prompt on a
+      // self-heal retry, so storing the wrapped/visual prompt (not the bare
+      // scene_prompt) keeps a retry faithful to what the user asked for.
+      const vo = (scene.voiceover_lines || scene.scene_summary || "").trim();
+      const scenePrompt =
+        scene.shot_type === "broll"
+          ? // Action / no-voice: render this clip's own line as a plain visual —
+            // no person, no spoken delivery. Fall back to the line when there's
+            // no separate scene_prompt (the Create page passes only the script).
+            (scene.scene_prompt?.trim() ||
+              `${vo} Cinematic action footage, no on-screen text, no one speaking to camera.`)
+          : `A person looking directly into the camera, speaking this line aloud as a UGC talking-head testimonial: "${vo}". ${scene.scene_prompt} Natural lip movement and spoken delivery.`;
       const { data: row } = await sb
         .from("ad_creatives")
         .insert({
           storyboard_id: storyId,
           scene_index: i,
           hook_text: scene.scene_summary,
-          image_prompt: scene.scene_prompt,
+          image_prompt: scenePrompt,
           image_url: img,
           hook_type: "scene",
           platform: "meta",
@@ -743,14 +800,6 @@ export async function createStoryboard(input: {
         .single();
       const id = (row as { id: string } | null)?.id;
       if (!id) continue;
-      // Render each scene per its shot_type: talking-head scenes frame a person
-      // speaking that scene's line (native model voice); b-roll scenes render the
-      // visual as-is.
-      const vo = (scene.voiceover_lines || scene.scene_summary || "").trim();
-      const scenePrompt =
-        scene.shot_type === "broll"
-          ? scene.scene_prompt
-          : `A person looking directly into the camera, speaking this line aloud as a UGC talking-head testimonial: "${vo}". ${scene.scene_prompt} Natural lip movement and spoken delivery.`;
       try {
         const { taskId } = await submitKieVideo({
           provider,
@@ -758,6 +807,7 @@ export async function createStoryboard(input: {
           mode: img ? "image-to-video" : "text-to-video",
           referenceImageUrls: img ? [img] : null,
           duration: scene.duration || durationPerClip,
+          sound, // false = silent action clip (no talking head / no voice)
         });
         await sb.from("ad_creatives").update({ t2v_job_id: taskId }).eq("id", id);
         created++;

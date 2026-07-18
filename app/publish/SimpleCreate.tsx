@@ -22,6 +22,8 @@ import {
   RefreshCw,
   ImagePlus,
   Timer,
+  Mic,
+  Video,
 } from "lucide-react";
 import { ScreenHeader, Badge, EmptyState } from "@/components/ui";
 import { posterFor } from "@/lib/format";
@@ -35,6 +37,7 @@ import {
   renderVideo,
   pollVideoJobs,
   deleteCreative,
+  deleteCreatives,
   deleteStoryboard,
   stitchClips,
   uploadReference,
@@ -89,6 +92,10 @@ export default function SimpleCreate({
   const [script, setScript] = useState("");
   const [sceneCount, setSceneCount] = useState(1);
   const [model, setModel] = useState<VideoProvider>("kling");
+  // "talking" = a person speaks each line aloud (talking head + voice).
+  // "action"  = silent action footage of what each line describes — no person,
+  //             no voice. This is the "just a video of action" path.
+  const [voiceMode, setVoiceMode] = useState<"talking" | "action">("talking");
   const [duration, setDuration] = useState<"auto" | number>("auto");
   const [images, setImages] = useState<string[]>([]); // image N seeds video N (i2v)
   const [uploading, setUploading] = useState(false);
@@ -179,19 +186,24 @@ export default function SimpleCreate({
       // skips its AI rewrite entirely and the model speaks precisely these words.
       const lines = splitScriptVerbatim(prompt, sceneCount);
       const allowed = PROVIDER_DURATIONS[model] ?? [10];
+      const talking = voiceMode === "talking";
       const r = await createStoryboard({
         prompt,
         provider: model,
         durationPerClip: duration === "auto" ? allowed[allowed.length - 1] : duration,
         // Image N seeds video N (image-to-video); scenes without an image are text-to-video.
         imageUrls: images,
+        // Line i drives clip i — the mapping the user counts on: script A → video 1,
+        // script B → video 2, and so on. splitScriptVerbatim preserves order.
         scenes: lines.map((voiceover) => ({
           voiceover,
-          shot_type: "talking_head" as const,
+          // Talking head speaks the line; Action renders the line as silent visuals.
+          shot_type: talking ? ("talking_head" as const) : ("broll" as const),
           // Auto: size each clip to its own line — cheapest length that still
           // finishes the sentence. Fixed: same length for every clip.
           duration: duration === "auto" ? fitDuration(voiceover, allowed) : duration,
         })),
+        sound: talking, // Action mode = silent (no voice / no talking head)
         autoStitch: false, // clips land individually in the grid; stitch by hand below
       });
       if (!r.ok) setNote(r.error || "Generation failed");
@@ -243,6 +255,26 @@ export default function SimpleCreate({
 
   function toggle(id: string) {
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  }
+
+  function deleteSelected() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    if (
+      !confirm(
+        `Delete ${ids.length} selected clip${ids.length > 1 ? "s" : ""} permanently? This can't be undone.`
+      )
+    )
+      return;
+    setNote(null);
+    startTransition(async () => {
+      const r = await deleteCreatives(ids);
+      if (!r.ok) setNote(r.error || "Delete failed");
+      else {
+        setSelected([]);
+        router.refresh();
+      }
+    });
   }
 
   function stitchSelected() {
@@ -385,6 +417,25 @@ export default function SimpleCreate({
           </label>
           <label
             className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[13px]"
+            title="Talking head: a person speaks each line aloud (voice on). Action only: silent footage of what each line describes — no person, no voice."
+          >
+            {voiceMode === "talking" ? (
+              <Mic size={15} className="text-[var(--color-ink-muted)]" />
+            ) : (
+              <Video size={15} className="text-[var(--color-ink-muted)]" />
+            )}
+            <span className="font-semibold text-[var(--color-ink-muted)]">Style</span>
+            <select
+              value={voiceMode}
+              onChange={(e) => setVoiceMode(e.target.value as "talking" | "action")}
+              className="bg-transparent text-[13px] font-bold outline-none"
+            >
+              <option value="talking">Talking head + voice</option>
+              <option value="action">Action only (no voice)</option>
+            </select>
+          </label>
+          <label
+            className="flex items-center gap-2 rounded-xl border border-[var(--color-line)] px-3 py-2 text-[13px]"
             title="Auto sizes each clip to its own line — the cheapest length that still finishes the sentence."
           >
             <Timer size={15} className="text-[var(--color-ink-muted)]" />
@@ -419,7 +470,7 @@ export default function SimpleCreate({
         {/* What each clip will actually be, before spending anything. */}
         {plannedLines.length > 0 && (
           <p className="mt-2 text-[11.5px] text-[var(--color-ink-muted)]">
-            {duration === "auto" ? "Auto-fit → " : "Fixed → "}
+            {voiceMode === "action" ? "Action · silent → " : duration === "auto" ? "Auto-fit → " : "Fixed → "}
             {plannedLines
               .map((l, i) => `#${i + 1} ${plannedDurations[i]}s${images[i] ? " · i2v" : ""}`)
               .join(" · ")}
@@ -451,6 +502,14 @@ export default function SimpleCreate({
             className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-semibold"
           >
             <Download size={13} /> Download
+          </button>
+          <button
+            onClick={deleteSelected}
+            disabled={pending}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--color-line)] px-3 py-1.5 text-[12.5px] font-semibold text-[var(--color-danger)] disabled:opacity-50"
+          >
+            {pending ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+            Delete
           </button>
           <button
             onClick={() => setSelected([])}

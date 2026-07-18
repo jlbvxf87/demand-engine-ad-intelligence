@@ -46,8 +46,9 @@ export async function reconcileStoryboards(sb: SB, origin: string): Promise<void
     clip_count: number;
     provider: string | null;
     duration_per_clip: number | null;
-    master_script_json: { autoStitch?: boolean } | null;
+    master_script_json: { autoStitch?: boolean; sound?: boolean } | null;
   }[]) {
+    const sound = s.master_script_json?.sound !== false; // default on; false = silent action clips
     const { data: clips } = await sb
       .from("ad_creatives")
       .select(
@@ -83,6 +84,7 @@ export async function reconcileStoryboards(sb: SB, origin: string): Promise<void
           mode: r.image_url ? "image-to-video" : "text-to-video",
           referenceImageUrls: r.image_url ? [r.image_url] : null,
           duration: s.duration_per_clip || 5,
+          sound,
         });
         await sb.from("ad_creatives").update({ t2v_job_id: taskId }).eq("id", r.id);
         reRendered++;
