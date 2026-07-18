@@ -26,6 +26,7 @@ import { ScreenHeader, Badge, EmptyState } from "@/components/ui";
 import { posterFor } from "@/lib/format";
 import { withDownload } from "@/lib/download";
 import { splitScriptVerbatim } from "@/lib/split-script";
+import { compressImage } from "@/lib/compress-image";
 import { VIDEO_PROVIDERS, PROVIDER_DURATIONS, providerLabel, type VideoProvider } from "@/lib/video";
 import {
   createStoryboard,
@@ -120,12 +121,16 @@ export default function SimpleCreate({
     setUploading(true);
     setNote(null);
     const urls: string[] = [];
-    for (const file of Array.from(files)) {
+    for (const raw of Array.from(files)) {
+      // Compress client-side: phone photos (2–15MB, often HEIC) blow past
+      // Vercel's ~4.5MB body cap → bare "Bad Request". This resizes to ≤1600px
+      // JPEG (~0.5MB) and normalizes HEIC, so uploads and KIE both accept it.
+      const file = await compressImage(raw);
       const fd = new FormData();
       fd.append("file", file);
       const r = await uploadReference(fd);
       if (r.ok && r.url) urls.push(r.url);
-      else setNote(r.error || "Image upload failed");
+      else setNote(`Image upload failed (${raw.name}): ${r.error || "unknown error"}`);
     }
     setUploading(false);
     if (urls.length) {
